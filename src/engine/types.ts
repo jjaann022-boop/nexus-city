@@ -53,6 +53,8 @@ export type Phase =
   | 'awaiting_purchase'
   | 'awaiting_fee_decision'
   | 'awaiting_end_turn'
+  // The current player stands on the real estate office and may develop and build stations.
+  | 'in_office'
   // The current player cannot pay. Resolution rules arrive in phase 4; until then the game halts here.
   | 'insolvent';
 
@@ -76,6 +78,13 @@ export interface GameState {
   pending: Pending | null;
   /** Tile index -> owner player id. Unowned properties are absent. */
   owners: Record<number, number>;
+  /** Tile index -> development level above base (2 or 3). Absent means base level. */
+  levels: Record<number, 2 | 3>;
+  /**
+   * Tile index -> owner of the station built on that property. Until sales exist
+   * this always equals owners[tile] (separate station ownership is an open rule).
+   */
+  stations: Record<number, number>;
   lastRoll: [number, number] | null;
   openingRolls: OpeningRoll[];
 }
@@ -86,6 +95,11 @@ export type Action =
   | { type: 'DECLINE_PURCHASE'; playerId: number }
   | { type: 'COLLECT_FEE'; playerId: number }
   | { type: 'WAIVE_FEE'; playerId: number }
+  /** Raise one property by one level. Only inside the office. */
+  | { type: 'DEVELOP'; playerId: number; tile: number }
+  /** Build the station on an owned property: inside the office, or on the property you just landed on. */
+  | { type: 'BUILD_STATION'; playerId: number; tile: number }
+  | { type: 'LEAVE_OFFICE'; playerId: number }
   | { type: 'END_TURN'; playerId: number };
 
 export type GameEvent =
@@ -100,6 +114,10 @@ export type GameEvent =
   | { type: 'fee_paid'; payer: number; owner: number; tile: number; amount: number }
   | { type: 'fee_waived'; payer: number; owner: number; tile: number; amount: number }
   | { type: 'insolvent'; payer: number; creditor: number; tile: number; amount: number }
+  | { type: 'office_entered'; playerId: number }
+  | { type: 'developed'; playerId: number; tile: number; level: number; cost: number }
+  | { type: 'station_built'; playerId: number; tile: number; cost: number }
+  | { type: 'office_left'; playerId: number }
   | { type: 'turn_ended'; playerId: number }
   | { type: 'turn_started'; playerId: number };
 

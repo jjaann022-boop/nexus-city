@@ -1,10 +1,13 @@
 import { validateBoard } from './board.ts';
+import { developmentCost, landingFee, levelOf, ownsFullDistrict, propertyPrice, stationCost } from './economy.ts';
 import { EngineError } from './errors.ts';
+import type { EngineErrorCode } from './errors.ts';
 import { rollDice } from './rng.ts';
 import { RULES } from './rules.ts';
 import type {
   Action,
   Board,
+  District,
   GameEvent,
   GameState,
   OpeningRoll,
@@ -95,9 +98,63 @@ export function createGame(board: Board, players: PlayerSetup[], seed: number): 
     phase: 'awaiting_roll',
     pending: null,
     owners: {},
+    levels: {},
+    stations: {},
     lastRoll: null,
     openingRolls,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Rule checks shared by getLegalActions (what the UI offers) and applyAction (what is enforced)
+// ---------------------------------------------------------------------------
+
+interface Problem {
+  code: EngineErrorCode;
+  message: string;
+}
+
+function propertyTargetProblem(board: Board, tile: number): Problem | null {
+  if (!Number.isInteger(tile) || tile < 0 || tile >= board.tiles.length || board.tiles[tile].kind !== 'property') {
+    return { code: 'invalid_target', message: `tile ${String(tile)} is not a property` };
+  }
+  return null;
+}
+
+function developmentProblem(board: Board, s: GameState, playerId: number, tile: number): Problem | null {
+  const bad = propertyTargetProblem(board, tile);
+  if (bad) return bad;
+  if (s.owners[tile] !== playerId) {
+    return { code: 'not_allowed', message: 'only the owner can develop a property' };
+  }
+  const district = board.tiles[tile].district as District;
+  if (!ownsFullDistrict(board, s, playerId, district)) {
+    return { code: 'not_allowed', message: `development needs all the properties of the ${district} district` };
+  }
+  if (levelOf(s, tile) >= RULES.maxLevel) {
+    return { code: 'not_allowed', message: 'the property is already at the highest level' };
+  }
+  const cost = developmentCost(propertyPrice(board, tile));
+  if (s.players[playerId].cash < cost) {
+    return { code: 'insufficient_cash', message: `needs ${cost}, has ${s.players[playerId].cash}` };
+  }
+  return null;
+}
+
+function stationProblem(board: Board, s: GameState, playerId: number, tile: number): Problem | null {
+  const bad = propertyTargetProblem(board, tile);
+  if (bad) return bad;
+  if (s.owners[tile] !== playerId) {
+    return { code: 'not_allowed', message: 'only the owner can build a station on a property' };
+  }
+  if (s.stations[tile] !== undefined) {
+    return { code: 'not_allowed', message: 'this property already has a station' };
+  }
+  const cost = stationCost(propertyPrice(board, tile));
+  if (s.players[playerId].cash < cost) {
+    return { code: 'insufficient_cash', message: `needs ${cost}, has ${s.players[playerId].cash}` };
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -105,7 +162,7 @@ export function createGame(board: Board, players: PlayerSetup[], seed: number): 
 // ---------------------------------------------------------------------------
 
 /** What the UI may offer right now. Empty means nothing can happen (phase 'insolvent'). */
-export function getLegalActions(state: GameState): Action[] {
+export function getLegalActions(board: Board, state: GameState): Action[] {
   const me = currentPlayerId(state);
   const pending = state.pending;
   switch (state.phase) {
@@ -125,8 +182,26 @@ export function getLegalActions(state: GameState): Action[] {
         { type: 'WAIVE_FEE', playerId: pending.owner },
       ];
     }
-    case 'awaiting_end_turn':
-      return [{ type: 'END_TURN', playerId: me }];
+    case 'awaiting_end_turn': {
+      const actions: Action[] = [];
+      // A station may be built on an owned property you are standing on (just landed or just bought).
+      const here = state.players[me].position;
+      if (stationProblem(board, state, me, here) === null) {
+        actions.push({ type: 'BUILD_STATION', playerId: me, tile: here });
+      }
+      actions.push({ type: 'END_TURN', playerId: me });
+      return actions;
+    }
+    case 'in_office': {
+      const actions: Action[] = [];
+      for (let tile = 0; tile < board.tiles.length; tile++) {
+        if (state.owners[tile] !== me) continue;
+        if (developmentProblem(board, state, me, tile) === null) actions.push({ type: 'DEVELOP', playerId: me, tile });
+        if (stationProblem(board, state, me, tile) === null) actions.push({ type: 'BUILD_STATION', playerId: me, tile });
+      }
+      actions.push({ type: 'LEAVE_OFFICE', playerId: me });
+      return actions;
+    }
     case 'insolvent':
       return [];
   }
@@ -158,6 +233,15 @@ export function applyAction(board: Board, state: GameState, action: Action): Ste
       break;
     case 'WAIVE_FEE':
       doWaiveFee(s, action.playerId, events);
+      break;
+    case 'DEVELOP':
+      doDevelop(board, s, action.playerId, action.tile, events);
+      break;
+    case 'BUILD_STATION':
+      doBuildStation(board, s, action.playerId, action.tile, events);
+      break;
+    case 'LEAVE_OFFICE':
+      doLeaveOffice(s, action.playerId, events);
       break;
     case 'END_TURN':
       doEndTurn(s, action.playerId, events);
@@ -242,15 +326,23 @@ function resolveLanding(board: Board, s: GameState, player: PlayerState, events:
     } else if (owner === player.id) {
       s.phase = 'awaiting_end_turn';
     } else {
-      // Base level: landing fee = 100% of the original price. The owner may waive it.
-      s.pending = { type: 'fee', tile: tileIndex, payer: player.id, owner, amount: price };
+      // Fee depends on development level and on a station (economy.ts). The owner may waive it.
+      const amount = landingFee(board, s, tileIndex);
+      s.pending = { type: 'fee', tile: tileIndex, payer: player.id, owner, amount };
       s.phase = 'awaiting_fee_decision';
-      events.push({ type: 'fee_due', payer: player.id, owner, tile: tileIndex, amount: price });
+      events.push({ type: 'fee_due', payer: player.id, owner, tile: tileIndex, amount });
     }
     return;
   }
 
-  // Municipality, financial center, transport center, office, utilities, projects and
+  if (tile.kind === 'real_estate_office') {
+    // Development and station building happen here. Mortgage, rent and sales join in later phases.
+    s.phase = 'in_office';
+    events.push({ type: 'office_entered', playerId: player.id });
+    return;
+  }
+
+  // Municipality, financial center, transport center, utilities, projects and
   // luck/mystery tiles arrive in later phases. Landing on them does nothing yet.
   events.push({ type: 'tile_not_implemented', playerId: player.id, tile: tileIndex, kind: tile.kind });
   s.phase = 'awaiting_end_turn';
@@ -341,6 +433,44 @@ function doWaiveFee(s: GameState, playerId: number, events: GameEvent[]): void {
   s.phase = 'awaiting_end_turn';
 }
 
+function doDevelop(board: Board, s: GameState, playerId: number, tile: number, events: GameEvent[]): void {
+  requirePhase(s, 'in_office');
+  const player = requireCurrentPlayer(s, playerId);
+  const problem = developmentProblem(board, s, playerId, tile);
+  if (problem) throw new EngineError(problem.code, problem.message);
+
+  const cost = developmentCost(propertyPrice(board, tile));
+  const level = (levelOf(s, tile) + 1) as 2 | 3;
+  player.cash -= cost;
+  s.levels[tile] = level;
+  events.push({ type: 'developed', playerId, tile, level, cost });
+}
+
+function doBuildStation(board: Board, s: GameState, playerId: number, tile: number, events: GameEvent[]): void {
+  if (s.phase !== 'in_office' && s.phase !== 'awaiting_end_turn') {
+    throw new EngineError('invalid_phase', `action not allowed now (phase is ${s.phase})`);
+  }
+  const player = requireCurrentPlayer(s, playerId);
+  // Outside the office, only the property the player is standing on qualifies.
+  if (s.phase === 'awaiting_end_turn' && tile !== player.position) {
+    throw new EngineError('not_allowed', 'outside the office a station can only be built where you stand');
+  }
+  const problem = stationProblem(board, s, playerId, tile);
+  if (problem) throw new EngineError(problem.code, problem.message);
+
+  const cost = stationCost(propertyPrice(board, tile));
+  player.cash -= cost;
+  s.stations[tile] = playerId;
+  events.push({ type: 'station_built', playerId, tile, cost });
+}
+
+function doLeaveOffice(s: GameState, playerId: number, events: GameEvent[]): void {
+  requirePhase(s, 'in_office');
+  requireCurrentPlayer(s, playerId);
+  events.push({ type: 'office_left', playerId });
+  s.phase = 'awaiting_end_turn';
+}
+
 function doEndTurn(s: GameState, playerId: number, events: GameEvent[]): void {
   requirePhase(s, 'awaiting_end_turn');
   requireCurrentPlayer(s, playerId);
@@ -398,12 +528,35 @@ export function checkInvariants(board: Board, state: GameState): string[] {
       }
     }
 
+    for (const [key, level] of Object.entries(state.levels)) {
+      const tile = board.tiles[Number(key)];
+      if (!tile || tile.kind !== 'property' || state.owners[Number(key)] === undefined) {
+        problems.push(`levels lists tile ${key}, which is not an owned property`);
+      }
+      if (level !== 2 && level !== 3) problems.push(`tile ${key} has invalid level ${String(level)}`);
+    }
+    for (const [key, owner] of Object.entries(state.stations)) {
+      const tile = board.tiles[Number(key)];
+      if (!tile || tile.kind !== 'property' || state.owners[Number(key)] === undefined) {
+        problems.push(`stations lists tile ${key}, which is not an owned property`);
+      } else if (owner !== state.owners[Number(key)]) {
+        // Separate station ownership needs a landing-fee rule that is still undecided.
+        problems.push(`station on tile ${key} must belong to the property owner`);
+      }
+    }
+
     const pending = state.pending;
     const me = state.turnOrder[state.turnIndex];
     switch (state.phase) {
       case 'awaiting_roll':
       case 'awaiting_end_turn':
         if (pending !== null) problems.push(`phase ${state.phase} must not have a pending item`);
+        break;
+      case 'in_office':
+        if (pending !== null) problems.push('in_office must not have a pending item');
+        if (board.tiles[state.players[me].position]?.kind !== 'real_estate_office') {
+          problems.push('in_office requires the current player to stand on the real estate office');
+        }
         break;
       case 'awaiting_purchase': {
         if (!pending || pending.type !== 'purchase') {
@@ -426,7 +579,7 @@ export function checkInvariants(board: Board, state: GameState): string[] {
           break;
         }
         const tile = board.tiles[pending.tile];
-        if (!tile || tile.kind !== 'property' || tile.price !== pending.amount) {
+        if (!tile || tile.kind !== 'property' || landingFee(board, state, pending.tile) !== pending.amount) {
           problems.push('pending fee does not match its tile');
         }
         if (state.owners[pending.tile] !== pending.owner) problems.push('pending fee owner does not own the tile');

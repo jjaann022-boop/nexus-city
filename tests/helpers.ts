@@ -92,7 +92,7 @@ export function playTurn(state: GameState): GameState {
   const me = currentPlayerId(state);
   let s = act(state, { type: 'ROLL', playerId: me }).state;
   for (let guard = 0; guard < 10; guard++) {
-    const legal = getLegalActions(s);
+    const legal = getLegalActions(board, s);
     const next =
       legal.find((a) => a.type === 'DECLINE_PURCHASE') ??
       legal.find((a) => a.type === 'WAIVE_FEE') ??

@@ -298,7 +298,7 @@ describe('buying from the bank', () => {
     const me = currentPlayerId(state);
     expectCode(() => act(state, { type: 'BUY', playerId: me }), 'insufficient_cash');
     assert.deepEqual(
-      getLegalActions(state).map((a) => a.type),
+      getLegalActions(board, state).map((a) => a.type),
       ['DECLINE_PURCHASE'],
     );
     assert.equal(act(state, { type: 'DECLINE_PURCHASE', playerId: me }).state.phase, 'awaiting_end_turn');
@@ -344,7 +344,7 @@ describe('landing fee on another player\'s property', () => {
     const { state, payer, owner } = landOnOwned();
     assert.equal(state.phase, 'awaiting_fee_decision');
     assert.deepEqual(state.pending, { type: 'fee', tile: PROP, payer, owner, amount: PROP_PRICE });
-    assert.deepEqual(getLegalActions(state), [
+    assert.deepEqual(getLegalActions(board, state), [
       { type: 'COLLECT_FEE', playerId: owner },
       { type: 'WAIVE_FEE', playerId: owner },
     ]);
@@ -394,7 +394,7 @@ describe('landing fee on another player\'s property', () => {
     assert.equal(after.players[owner].cash, 20000);
     assert.deepEqual(after.pending, { type: 'insolvent', tile: PROP, payer, creditor: owner, amount: PROP_PRICE });
     assert.deepEqual(events, [{ type: 'insolvent', payer, creditor: owner, tile: PROP, amount: PROP_PRICE }]);
-    assert.deepEqual(getLegalActions(after), []);
+    assert.deepEqual(getLegalActions(board, after), []);
     assert.deepEqual(checkInvariants(board, after), []);
     expectCode(() => act(after, { type: 'END_TURN', playerId: payer }), 'invalid_phase');
   });
@@ -455,13 +455,13 @@ describe('turn flow and authorization', () => {
   it('exposes exactly the legal actions for each phase', () => {
     const s = newGame(2);
     const me = currentPlayerId(s);
-    assert.deepEqual(getLegalActions(s), [{ type: 'ROLL', playerId: me }]);
+    assert.deepEqual(getLegalActions(board, s), [{ type: 'ROLL', playerId: me }]);
     const { state } = rollOnto(s, PROP);
     assert.deepEqual(
-      getLegalActions(state).map((a) => a.type),
+      getLegalActions(board, state).map((a) => a.type),
       ['BUY', 'DECLINE_PURCHASE'],
     );
-    for (const action of getLegalActions(state)) assert.doesNotThrow(() => act(state, action));
+    for (const action of getLegalActions(board, state)) assert.doesNotThrow(() => act(state, action));
   });
 });
 
@@ -470,7 +470,7 @@ describe('purity', () => {
     const s = deepFreeze(newGame(3, 8));
     const me = currentPlayerId(s);
     const rolled = deepFreeze(act(s, { type: 'ROLL', playerId: me }).state);
-    for (const action of getLegalActions(rolled)) act(rolled, action);
+    for (const action of getLegalActions(board, rolled)) act(rolled, action);
     assert.equal(s.phase, 'awaiting_roll');
   });
 
@@ -555,11 +555,12 @@ describe('random play simulation', () => {
     if (buy) return dice < 0.8 ? buy : (legal.find((a) => a.type === 'DECLINE_PURCHASE') as Action);
     const collect = legal.find((a) => a.type === 'COLLECT_FEE');
     if (collect) return dice < 0.85 ? collect : (legal.find((a) => a.type === 'WAIVE_FEE') as Action);
-    return legal[0];
+    // Office and end-of-turn menus: pick any legal action (development, stations, leaving).
+    return legal[Math.min(legal.length - 1, Math.floor(dice * legal.length))];
   }
 
   it('keeps every invariant and conserves money over many random games', () => {
-    const totals = { bought: 0, collected: 0, waived: 0, gateBonuses: 0, debtPaid: 0, halted: 0, turns: 0 };
+    const totals = { bought: 0, collected: 0, waived: 0, gateBonuses: 0, developed: 0, stations: 0, offices: 0, turns: 0 };
 
     for (let seed = 1; seed <= 120; seed++) {
       const count = 2 + (seed % 5);
@@ -569,6 +570,12 @@ describe('random play simulation', () => {
           d.players[0].bankDebt = 3000;
         });
       }
+      if (seed % 3 === 0) {
+        // Player 0 starts with the whole commercial district so development actually happens.
+        s = patch(s, (d) => {
+          for (const tile of [1, 2, 4, 6, 8]) d.owners[tile] = 0;
+        });
+      }
       const startDebt = s.players.reduce((sum, p) => sum + p.bankDebt, 0);
       let botState = seed * 7919 + 13;
       let received = 0;
@@ -576,11 +583,8 @@ describe('random play simulation', () => {
       let debtPaid = 0;
 
       for (let step = 0; step < 2500; step++) {
-        const legal = getLegalActions(s);
-        if (legal.length === 0) {
-          totals.halted++;
-          break;
-        }
+        const legal = getLegalActions(board, s);
+        if (legal.length === 0) break; // insolvency rules arrive in phase 4
         const [f, next] = nextFloat(botState);
         botState = next;
         const result = act(s, choose(legal, f));
@@ -593,6 +597,14 @@ describe('random play simulation', () => {
           } else if (e.type === 'bought') {
             spent += e.price;
             totals.bought++;
+          } else if (e.type === 'developed') {
+            spent += e.cost;
+            totals.developed++;
+          } else if (e.type === 'station_built') {
+            spent += e.cost;
+            totals.stations++;
+          } else if (e.type === 'office_entered') {
+            totals.offices++;
           } else if (e.type === 'fee_paid') {
             totals.collected++;
           } else if (e.type === 'fee_waived') {
@@ -605,7 +617,8 @@ describe('random play simulation', () => {
         assert.deepEqual(problems, [], `seed ${seed}, step ${step}`);
       }
 
-      // Money only enters through gate bonuses and leaves through purchases; fees just move it around.
+      // Money only enters through gate bonuses and leaves through purchases, development and
+      // stations (all paid to the bank); fees just move it between players.
       const cash = s.players.reduce((sum, p) => sum + p.cash, 0);
       assert.equal(cash, count * RULES.startingCash + received - spent, `money not conserved (seed ${seed})`);
       const debt = s.players.reduce((sum, p) => sum + p.bankDebt, 0);
@@ -617,6 +630,9 @@ describe('random play simulation', () => {
     assert.ok(totals.waived > 0, 'bots should sometimes waive');
     assert.ok(totals.gateBonuses > 20, 'bots should lap the board');
     assert.ok(totals.turns > 1000);
+    assert.ok(totals.offices > 20, 'bots should visit the office');
+    assert.ok(totals.developed > 5, 'bots should develop properties');
+    assert.ok(totals.stations > 5, 'bots should build stations');
   });
 });
 
