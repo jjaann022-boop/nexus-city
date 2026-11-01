@@ -14,4 +14,6 @@ export const RULES = {
   stationCostPercent: 100,
   /** Brief sections 6-7: a station adds half of its build cost to the landing fee. */
   stationFeeAddOnPercent: 50,
+  /** Brief section 8: rent is 10% of the original price, paid by the tenant to the owner each lap. */
+  rentPercent: 10,
 } as const;

@@ -6,6 +6,7 @@ import {
   mortgageValue,
   ownsFullDistrict,
   propertyPrice,
+  rentAmount,
   stationCost,
 } from './economy.ts';
 import { EngineError } from './errors.ts';
@@ -109,6 +110,8 @@ export function createGame(board: Board, players: PlayerSetup[], seed: number): 
     levels: {},
     stations: {},
     mortgaged: {},
+    leaseOffers: {},
+    leases: {},
     lastRoll: null,
     openingRolls,
   };
@@ -181,6 +184,12 @@ function mortgageProblem(board: Board, s: GameState, playerId: number, tile: num
   if (s.mortgaged[tile] !== undefined) {
     return { code: 'not_allowed', message: 'this property is already mortgaged' };
   }
+  if (s.leases[tile] !== undefined) {
+    return { code: 'not_allowed', message: 'a leased property cannot be mortgaged; end the lease first' };
+  }
+  if (s.leaseOffers[tile] !== undefined) {
+    return { code: 'not_allowed', message: 'a property offered for rent cannot be mortgaged; cancel the listing first' };
+  }
   return null;
 }
 
@@ -200,12 +209,100 @@ function redeemProblem(board: Board, s: GameState, playerId: number, tile: numbe
   return null;
 }
 
+function listProblem(board: Board, s: GameState, playerId: number, tile: number, laps: number | null): Problem | null {
+  const bad = propertyTargetProblem(board, tile);
+  if (bad) return bad;
+  if (s.owners[tile] !== playerId) {
+    return { code: 'not_allowed', message: 'only the owner can offer a property for rent' };
+  }
+  if (laps !== null && (!Number.isInteger(laps) || laps < 1)) {
+    return { code: 'invalid_terms', message: 'laps must be a whole number of at least 1, or null for open-ended' };
+  }
+  if (s.mortgaged[tile] !== undefined) {
+    return { code: 'not_allowed', message: 'a mortgaged property cannot be offered for rent' };
+  }
+  if (s.leases[tile] !== undefined) {
+    return { code: 'not_allowed', message: 'this property is already leased' };
+  }
+  if (s.leaseOffers[tile] !== undefined) {
+    return { code: 'not_allowed', message: 'this property is already offered for rent' };
+  }
+  return null;
+}
+
+function cancelListingProblem(board: Board, s: GameState, playerId: number, tile: number): Problem | null {
+  const bad = propertyTargetProblem(board, tile);
+  if (bad) return bad;
+  if (s.owners[tile] !== playerId) {
+    return { code: 'not_allowed', message: 'only the owner can cancel a listing' };
+  }
+  if (s.leaseOffers[tile] === undefined) {
+    return { code: 'not_allowed', message: 'this property is not offered for rent' };
+  }
+  return null;
+}
+
+function rentProblem(board: Board, s: GameState, playerId: number, tile: number): Problem | null {
+  const bad = propertyTargetProblem(board, tile);
+  if (bad) return bad;
+  if (s.leaseOffers[tile] === undefined) {
+    return { code: 'not_allowed', message: 'this property is not offered for rent' };
+  }
+  if (s.owners[tile] === playerId) {
+    return { code: 'not_allowed', message: 'you cannot rent your own property' };
+  }
+  return null;
+}
+
+function endLeaseProblem(board: Board, s: GameState, playerId: number, tile: number): Problem | null {
+  const bad = propertyTargetProblem(board, tile);
+  if (bad) return bad;
+  if (s.owners[tile] !== playerId) {
+    return { code: 'not_allowed', message: 'only the owner can end a lease' };
+  }
+  if (s.leases[tile] === undefined) {
+    return { code: 'not_allowed', message: 'this property is not leased' };
+  }
+  return null;
+}
+
+// The owner may offer, cancel and end leases during his own turn, when no decision is pending.
+const OWNER_MENU_PHASES: readonly Phase[] = ['awaiting_roll', 'awaiting_end_turn', 'in_office'];
+
+function requireOwnerMenu(s: GameState): void {
+  if (!OWNER_MENU_PHASES.includes(s.phase)) {
+    throw new EngineError('invalid_phase', `action not allowed now (phase is ${s.phase})`);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Actions
 // ---------------------------------------------------------------------------
 
 /** What the UI may offer right now. Empty means nothing can happen (phase 'insolvent'). */
 export function getLegalActions(board: Board, state: GameState): Action[] {
+  const actions = phaseActions(board, state);
+  const me = currentPlayerId(state);
+  if (OWNER_MENU_PHASES.includes(state.phase)) {
+    for (let tile = 0; tile < board.tiles.length; tile++) {
+      if (state.owners[tile] !== me) continue;
+      // Listing takes free terms; the open-ended listing is offered as the representative action.
+      if (listProblem(board, state, me, tile, null) === null) {
+        actions.push({ type: 'LIST_FOR_RENT', playerId: me, tile, laps: null });
+      }
+      if (cancelListingProblem(board, state, me, tile) === null) actions.push({ type: 'CANCEL_LISTING', playerId: me, tile });
+      if (endLeaseProblem(board, state, me, tile) === null) actions.push({ type: 'END_LEASE', playerId: me, tile });
+    }
+  }
+  if (state.phase === 'in_office') {
+    for (let tile = 0; tile < board.tiles.length; tile++) {
+      if (rentProblem(board, state, me, tile) === null) actions.push({ type: 'RENT', playerId: me, tile });
+    }
+  }
+  return actions;
+}
+
+function phaseActions(board: Board, state: GameState): Action[] {
   const me = currentPlayerId(state);
   const pending = state.pending;
   switch (state.phase) {
@@ -291,6 +388,18 @@ export function applyAction(board: Board, state: GameState, action: Action): Ste
     case 'REDEEM':
       doRedeem(board, s, action.playerId, action.tile, events);
       break;
+    case 'LIST_FOR_RENT':
+      doListForRent(board, s, action.playerId, action.tile, action.laps, events);
+      break;
+    case 'CANCEL_LISTING':
+      doCancelListing(board, s, action.playerId, action.tile, events);
+      break;
+    case 'RENT':
+      doRent(board, s, action.playerId, action.tile, events);
+      break;
+    case 'END_LEASE':
+      doEndLease(board, s, action.playerId, action.tile, events);
+      break;
     case 'LEAVE_OFFICE':
       doLeaveOffice(s, action.playerId, events);
       break;
@@ -343,7 +452,11 @@ function doRoll(board: Board, s: GameState, playerId: number, events: GameEvent[
   events.push({ type: 'moved', playerId, from, to });
 
   // Passing the gate, or arriving on it after a full lap, pays once. Starting a turn on it pays nothing.
-  if (raw >= tileCount) awardGateBonus(player, events);
+  if (raw >= tileCount) {
+    awardGateBonus(player, events);
+    // Rent on every property the player leases falls due on completing a lap.
+    if (!payRents(board, s, player, events)) return;
+  }
 
   resolveLanding(board, s, player, events);
 }
@@ -381,11 +494,18 @@ function resolveLanding(board: Board, s: GameState, player: PlayerState, events:
       events.push({ type: 'no_fee_mortgaged', payer: player.id, owner, tile: tileIndex });
       s.phase = 'awaiting_end_turn';
     } else {
-      // Fee depends on development level and on a station (economy.ts). The owner may waive it.
-      const amount = landingFee(board, s, tileIndex);
-      s.pending = { type: 'fee', tile: tileIndex, payer: player.id, owner, amount };
-      s.phase = 'awaiting_fee_decision';
-      events.push({ type: 'fee_due', payer: player.id, owner, tile: tileIndex, amount });
+      // While leased, the landing fee goes to the tenant (who pays the owner rent each lap).
+      const recipient = s.leases[tileIndex]?.tenant ?? owner;
+      if (recipient === player.id) {
+        // The tenant standing on the property he rents pays nothing.
+        s.phase = 'awaiting_end_turn';
+      } else {
+        // Fee depends on development level and on a station (economy.ts). Its receiver may waive it.
+        const amount = landingFee(board, s, tileIndex);
+        s.pending = { type: 'fee', tile: tileIndex, payer: player.id, owner: recipient, amount };
+        s.phase = 'awaiting_fee_decision';
+        events.push({ type: 'fee_due', payer: player.id, owner: recipient, tile: tileIndex, amount });
+      }
     }
     return;
   }
@@ -460,6 +580,7 @@ function doCollectFee(s: GameState, playerId: number, events: GameEvent[]): void
   // is implemented in phase 4, so the game halts in this phase until then.
   s.pending = {
     type: 'insolvent',
+    cause: 'fee',
     tile: pending.tile,
     payer: pending.payer,
     creditor: pending.owner,
@@ -468,6 +589,7 @@ function doCollectFee(s: GameState, playerId: number, events: GameEvent[]): void
   s.phase = 'insolvent';
   events.push({
     type: 'insolvent',
+    cause: 'fee',
     payer: pending.payer,
     creditor: pending.owner,
     tile: pending.tile,
@@ -541,6 +663,83 @@ function doRedeem(board: Board, s: GameState, playerId: number, tile: number, ev
   player.cash -= amount;
   delete s.mortgaged[tile];
   events.push({ type: 'redeemed', playerId, tile, amount });
+}
+
+function doListForRent(
+  board: Board,
+  s: GameState,
+  playerId: number,
+  tile: number,
+  laps: number | null,
+  events: GameEvent[],
+): void {
+  requireOwnerMenu(s);
+  requireCurrentPlayer(s, playerId);
+  const problem = listProblem(board, s, playerId, tile, laps === undefined ? Number.NaN : laps);
+  if (problem) throw new EngineError(problem.code, problem.message);
+  s.leaseOffers[tile] = { laps };
+  events.push({ type: 'listed_for_rent', playerId, tile, laps });
+}
+
+function doCancelListing(board: Board, s: GameState, playerId: number, tile: number, events: GameEvent[]): void {
+  requireOwnerMenu(s);
+  requireCurrentPlayer(s, playerId);
+  const problem = cancelListingProblem(board, s, playerId, tile);
+  if (problem) throw new EngineError(problem.code, problem.message);
+  delete s.leaseOffers[tile];
+  events.push({ type: 'listing_cancelled', playerId, tile });
+}
+
+function doRent(board: Board, s: GameState, playerId: number, tile: number, events: GameEvent[]): void {
+  requirePhase(s, 'in_office');
+  requireCurrentPlayer(s, playerId);
+  const problem = rentProblem(board, s, playerId, tile);
+  if (problem) throw new EngineError(problem.code, problem.message);
+  const laps = s.leaseOffers[tile].laps;
+  delete s.leaseOffers[tile];
+  s.leases[tile] = { tenant: playerId, lapsLeft: laps };
+  events.push({ type: 'leased', tenant: playerId, owner: s.owners[tile], tile, laps });
+}
+
+function doEndLease(board: Board, s: GameState, playerId: number, tile: number, events: GameEvent[]): void {
+  requireOwnerMenu(s);
+  requireCurrentPlayer(s, playerId);
+  const problem = endLeaseProblem(board, s, playerId, tile);
+  if (problem) throw new EngineError(problem.code, problem.message);
+  const tenant = s.leases[tile].tenant;
+  delete s.leases[tile];
+  events.push({ type: 'lease_ended', tile, owner: playerId, tenant, reason: 'owner' });
+}
+
+/**
+ * On completing a lap the tenant pays 10% of the original price to the owner for every property
+ * he leases (in tile order). Returns false when he cannot pay: nothing more moves, the phase becomes
+ * 'insolvent' (rules arrive in phase 4) and the landing of this move stays unresolved.
+ */
+function payRents(board: Board, s: GameState, player: PlayerState, events: GameEvent[]): boolean {
+  for (let tile = 0; tile < board.tiles.length; tile++) {
+    const lease = s.leases[tile];
+    if (!lease || lease.tenant !== player.id) continue;
+    const owner = s.owners[tile];
+    const amount = rentAmount(propertyPrice(board, tile));
+    if (player.cash < amount) {
+      s.pending = { type: 'insolvent', cause: 'rent', tile, payer: player.id, creditor: owner, amount };
+      s.phase = 'insolvent';
+      events.push({ type: 'insolvent', cause: 'rent', payer: player.id, creditor: owner, tile, amount });
+      return false;
+    }
+    player.cash -= amount;
+    s.players[owner].cash += amount;
+    const lapsLeft = lease.lapsLeft === null ? null : lease.lapsLeft - 1;
+    events.push({ type: 'rent_paid', tenant: player.id, owner, tile, amount, lapsLeft });
+    if (lapsLeft === 0) {
+      delete s.leases[tile];
+      events.push({ type: 'lease_ended', tile, owner, tenant: player.id, reason: 'term' });
+    } else {
+      s.leases[tile] = { tenant: lease.tenant, lapsLeft };
+    }
+  }
+  return true;
 }
 
 function doLeaveOffice(s: GameState, playerId: number, events: GameEvent[]): void {
@@ -632,6 +831,37 @@ export function checkInvariants(board: Board, state: GameState): string[] {
       if (!Number.isInteger(amount) || amount <= 0) problems.push(`tile ${key} has invalid mortgage amount ${String(amount)}`);
     }
 
+    for (const [key, offer] of Object.entries(state.leaseOffers)) {
+      const tile = board.tiles[Number(key)];
+      const k = Number(key);
+      if (!tile || tile.kind !== 'property' || state.owners[k] === undefined) {
+        problems.push(`leaseOffers lists tile ${key}, which is not an owned property`);
+        continue;
+      }
+      if (state.mortgaged[k] !== undefined) problems.push(`tile ${key} is both mortgaged and offered for rent`);
+      if (state.leases[k] !== undefined) problems.push(`tile ${key} is both leased and offered for rent`);
+      if (offer.laps !== null && (!Number.isInteger(offer.laps) || offer.laps < 1)) {
+        problems.push(`tile ${key} has invalid listing length ${String(offer.laps)}`);
+      }
+    }
+    for (const [key, lease] of Object.entries(state.leases)) {
+      const tile = board.tiles[Number(key)];
+      const k = Number(key);
+      if (!tile || tile.kind !== 'property' || state.owners[k] === undefined) {
+        problems.push(`leases lists tile ${key}, which is not an owned property`);
+        continue;
+      }
+      if (state.mortgaged[k] !== undefined) problems.push(`tile ${key} is both mortgaged and leased`);
+      if (!Number.isInteger(lease.tenant) || lease.tenant < 0 || lease.tenant >= count) {
+        problems.push(`tile ${key} has invalid tenant ${String(lease.tenant)}`);
+      } else if (lease.tenant === state.owners[k]) {
+        problems.push(`tile ${key} is leased to its own owner`);
+      }
+      if (lease.lapsLeft !== null && (!Number.isInteger(lease.lapsLeft) || lease.lapsLeft < 1)) {
+        problems.push(`tile ${key} has invalid lease length ${String(lease.lapsLeft)}`);
+      }
+    }
+
     const pending = state.pending;
     const me = state.turnOrder[state.turnIndex];
     switch (state.phase) {
@@ -669,14 +899,24 @@ export function checkInvariants(board: Board, state: GameState): string[] {
         if (!tile || tile.kind !== 'property' || landingFee(board, state, pending.tile) !== pending.amount) {
           problems.push('pending fee does not match its tile');
         }
-        if (state.owners[pending.tile] !== pending.owner) problems.push('pending fee owner does not own the tile');
+        // The fee goes to the tenant while the property is leased, otherwise to its owner.
+        const receiver = state.leases[pending.tile]?.tenant ?? state.owners[pending.tile];
+        if (receiver !== pending.owner) problems.push('pending fee receiver is neither the tenant nor the owner');
+        if (state.owners[pending.tile] === pending.payer) problems.push('the owner never pays a fee on his own property');
         if (state.mortgaged[pending.tile] !== undefined) problems.push('pending fee is on a mortgaged tile');
         if (pending.payer !== me) problems.push('pending fee payer must be the current player');
         if (pending.payer === pending.owner) problems.push('pending fee payer and owner are the same player');
         break;
       }
       case 'insolvent':
-        if (!pending || pending.type !== 'insolvent') problems.push('insolvent phase needs a pending insolvency');
+        if (!pending || pending.type !== 'insolvent') {
+          problems.push('insolvent phase needs a pending insolvency');
+        } else if (pending.cause === 'rent') {
+          const lease = state.leases[pending.tile];
+          if (!lease || lease.tenant !== pending.payer || state.owners[pending.tile] !== pending.creditor) {
+            problems.push('pending rent insolvency does not match a lease');
+          }
+        }
         break;
       default:
         problems.push(`unknown phase ${String(state.phase)}`);

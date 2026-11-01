@@ -45,8 +45,12 @@ export interface PlayerState {
 
 export type Pending =
   | { type: 'purchase'; tile: number; price: number }
+  // `owner` is whoever receives the fee and decides to collect or waive it: the property's owner,
+  // or its tenant while it is leased.
   | { type: 'fee'; tile: number; payer: number; owner: number; amount: number }
-  | { type: 'insolvent'; tile: number; payer: number; creditor: number; amount: number };
+  // cause 'fee': a landing fee that could not be paid. cause 'rent': rent due on completing a lap
+  // (the landing on the tile where the move ended has not been resolved yet).
+  | { type: 'insolvent'; cause: 'fee' | 'rent'; tile: number; payer: number; creditor: number; amount: number };
 
 export type Phase =
   | 'awaiting_roll'
@@ -91,6 +95,10 @@ export interface GameState {
    * count toward owning a whole district.
    */
   mortgaged: Record<number, number>;
+  /** Tile index -> rental listing made by the owner (owners[tile]). laps null means open-ended. */
+  leaseOffers: Record<number, { laps: number | null }>;
+  /** Tile index -> active lease. lapsLeft counts the rent payments still due (null = open-ended). */
+  leases: Record<number, { tenant: number; lapsLeft: number | null }>;
   lastRoll: [number, number] | null;
   openingRolls: OpeningRoll[];
 }
@@ -109,6 +117,13 @@ export type Action =
   | { type: 'MORTGAGE'; playerId: number; tile: number }
   /** Repay the bank the exact mortgage amount. Only inside the office. */
   | { type: 'REDEEM'; playerId: number; tile: number }
+  /** Owner offers a property for rent (laps = number of rent payments, or null for open-ended). Own turn only. */
+  | { type: 'LIST_FOR_RENT'; playerId: number; tile: number; laps: number | null }
+  | { type: 'CANCEL_LISTING'; playerId: number; tile: number }
+  /** Rent a listed property. Only inside the office. */
+  | { type: 'RENT'; playerId: number; tile: number }
+  /** The owner ends a lease whenever he wants. Own turn only. */
+  | { type: 'END_LEASE'; playerId: number; tile: number }
   | { type: 'LEAVE_OFFICE'; playerId: number }
   | { type: 'END_TURN'; playerId: number };
 
@@ -123,7 +138,12 @@ export type GameEvent =
   | { type: 'fee_due'; payer: number; owner: number; tile: number; amount: number }
   | { type: 'fee_paid'; payer: number; owner: number; tile: number; amount: number }
   | { type: 'fee_waived'; payer: number; owner: number; tile: number; amount: number }
-  | { type: 'insolvent'; payer: number; creditor: number; tile: number; amount: number }
+  | { type: 'insolvent'; cause: 'fee' | 'rent'; payer: number; creditor: number; tile: number; amount: number }
+  | { type: 'listed_for_rent'; playerId: number; tile: number; laps: number | null }
+  | { type: 'listing_cancelled'; playerId: number; tile: number }
+  | { type: 'leased'; tenant: number; owner: number; tile: number; laps: number | null }
+  | { type: 'rent_paid'; tenant: number; owner: number; tile: number; amount: number; lapsLeft: number | null }
+  | { type: 'lease_ended'; tile: number; owner: number; tenant: number; reason: 'term' | 'owner' }
   | { type: 'office_entered'; playerId: number }
   | { type: 'developed'; playerId: number; tile: number; level: number; cost: number }
   | { type: 'station_built'; playerId: number; tile: number; cost: number }

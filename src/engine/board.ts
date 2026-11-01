@@ -81,8 +81,8 @@ export function validateBoard(raw: unknown): string[] {
 
     if (kind === 'property') {
       const price = t.price;
-      if (!Number.isInteger(price) || (price as number) <= 0 || (price as number) % 2 !== 0) {
-        errors.push(`${where}: property price must be a positive even integer (so 50% and 150% stay whole liras)`);
+      if (!Number.isInteger(price) || (price as number) <= 0 || (price as number) % 10 !== 0) {
+        errors.push(`${where}: property price must be a positive multiple of 10 (so 10% rent and discounts and 50% steps stay whole liras)`);
         shapeOk = false;
       }
     } else if (t.price !== undefined) {

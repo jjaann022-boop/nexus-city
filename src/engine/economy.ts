@@ -1,8 +1,8 @@
 import { RULES } from './rules.ts';
 import type { Board, District, GameState } from './types.ts';
 
-// Board validation guarantees property prices are positive even integers, so every
-// percentage used below (50%, 100%, 150%, 200%) produces a whole number of liras.
+// Board validation guarantees property prices are positive multiples of 10, so every
+// percentage used below (10%, 50%, 100%, 150%, 200%) produces a whole number of liras.
 function percentOf(price: number, percent: number): number {
   const value = (price * percent) / 100;
   if (!Number.isInteger(value)) throw new Error(`${percent}% of ${price} is not a whole number`);
@@ -21,6 +21,11 @@ export function developmentCost(price: number): number {
 /** Cost of building the station on a property. */
 export function stationCost(price: number): number {
   return percentOf(price, RULES.stationCostPercent);
+}
+
+/** Rent paid by a tenant to the owner each lap. */
+export function rentAmount(price: number): number {
+  return percentOf(price, RULES.rentPercent);
 }
 
 /** Level 1 is the base level; development raises it to 2 and 3. */

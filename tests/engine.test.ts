@@ -68,9 +68,10 @@ describe('board validation', () => {
       (b) => void (b.tiles[8] = { name: 'x', kind: 'utility', district: 'commercial' }),
       /commercial needs exactly 5 property/,
     ],
-    ['odd price', (b) => void (b.tiles[1].price = 601), /positive even integer/],
-    ['zero price', (b) => void (b.tiles[1].price = 0), /positive even integer/],
-    ['property without price', (b) => void delete b.tiles[1].price, /positive even integer/],
+    ['odd price', (b) => void (b.tiles[1].price = 601), /multiple of 10/],
+    ['even price that is not a multiple of 10', (b) => void (b.tiles[1].price = 602), /multiple of 10/],
+    ['zero price', (b) => void (b.tiles[1].price = 0), /multiple of 10/],
+    ['property without price', (b) => void delete b.tiles[1].price, /multiple of 10/],
     ['unknown kind', (b) => void (b.tiles[2].kind = 'castle'), /unknown kind/],
     ['corner inside a district', (b) => void (b.tiles[9].district = 'tech'), /must not belong to a district/],
     ['utility with a price', (b) => void (b.tiles[5].price = 100), /only properties have a price/],
@@ -392,8 +393,17 @@ describe('landing fee on another player\'s property', () => {
     assert.equal(after.phase, 'insolvent');
     assert.equal(after.players[payer].cash, PROP_PRICE - 1);
     assert.equal(after.players[owner].cash, 20000);
-    assert.deepEqual(after.pending, { type: 'insolvent', tile: PROP, payer, creditor: owner, amount: PROP_PRICE });
-    assert.deepEqual(events, [{ type: 'insolvent', payer, creditor: owner, tile: PROP, amount: PROP_PRICE }]);
+    assert.deepEqual(after.pending, {
+      type: 'insolvent',
+      cause: 'fee',
+      tile: PROP,
+      payer,
+      creditor: owner,
+      amount: PROP_PRICE,
+    });
+    assert.deepEqual(events, [
+      { type: 'insolvent', cause: 'fee', payer, creditor: owner, tile: PROP, amount: PROP_PRICE },
+    ]);
     assert.deepEqual(getLegalActions(board, after), []);
     assert.deepEqual(checkInvariants(board, after), []);
     expectCode(() => act(after, { type: 'END_TURN', playerId: payer }), 'invalid_phase');
@@ -555,12 +565,16 @@ describe('random play simulation', () => {
     if (buy) return dice < 0.8 ? buy : (legal.find((a) => a.type === 'DECLINE_PURCHASE') as Action);
     const collect = legal.find((a) => a.type === 'COLLECT_FEE');
     if (collect) return dice < 0.85 ? collect : (legal.find((a) => a.type === 'WAIVE_FEE') as Action);
-    // Office and end-of-turn menus: pick any legal action (development, stations, leaving).
+    // Prefer moving the game along; otherwise pick any legal action (development, mortgages, leases, ...).
+    const roll = legal.find((a) => a.type === 'ROLL');
+    if (roll && dice < 0.7) return roll;
+    const end = legal.find((a) => a.type === 'END_TURN');
+    if (end && dice < 0.5) return end;
     return legal[Math.min(legal.length - 1, Math.floor(dice * legal.length))];
   }
 
   it('keeps every invariant and conserves money over many random games', () => {
-    const totals = { bought: 0, collected: 0, waived: 0, gateBonuses: 0, developed: 0, stations: 0, offices: 0, mortgages: 0, redeems: 0, freeLandings: 0, turns: 0 };
+    const totals = { bought: 0, collected: 0, waived: 0, gateBonuses: 0, developed: 0, stations: 0, offices: 0, mortgages: 0, redeems: 0, freeLandings: 0, listings: 0, leases: 0, rents: 0, leaseEnds: 0, turns: 0 };
 
     for (let seed = 1; seed <= 120; seed++) {
       const count = 2 + (seed % 5);
@@ -605,6 +619,14 @@ describe('random play simulation', () => {
             totals.redeems++;
           } else if (e.type === 'no_fee_mortgaged') {
             totals.freeLandings++;
+          } else if (e.type === 'listed_for_rent') {
+            totals.listings++;
+          } else if (e.type === 'leased') {
+            totals.leases++;
+          } else if (e.type === 'rent_paid') {
+            totals.rents++; // moves money between players only
+          } else if (e.type === 'lease_ended') {
+            totals.leaseEnds++;
           } else if (e.type === 'developed') {
             spent += e.cost;
             totals.developed++;
@@ -644,6 +666,10 @@ describe('random play simulation', () => {
     assert.ok(totals.mortgages > 5, 'bots should mortgage');
     assert.ok(totals.redeems > 0, 'bots should redeem');
     assert.ok(totals.freeLandings > 0, 'someone should land on a mortgaged property');
+    assert.ok(totals.listings > 5, 'bots should offer properties for rent');
+    assert.ok(totals.leases > 2, 'bots should rent properties');
+    assert.ok(totals.rents > 0, 'tenants should pay rent');
+    assert.ok(totals.leaseEnds > 0, 'leases should end');
   });
 });
 

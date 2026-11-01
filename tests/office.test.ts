@@ -35,6 +35,9 @@ function inOffice(state: GameState): GameState {
 const types = (state: GameState): string[] => getLegalActions(board, state).map((a) => a.type);
 /** The legal office actions that spend money on building (mortgage actions are covered in mortgage.test.ts). */
 const buildTypes = (state: GameState): string[] => types(state).filter((t) => t === 'DEVELOP' || t === 'BUILD_STATION');
+/** Legal actions without the owner's rental menu (covered in lease.test.ts). */
+const coreTypes = (state: GameState): string[] =>
+  types(state).filter((t) => t !== 'LIST_FOR_RENT' && t !== 'CANCEL_LISTING' && t !== 'END_LEASE' && t !== 'RENT');
 
 describe('economy formulas', () => {
   it('development costs 50% and a station 100% of the original price', () => {
@@ -208,14 +211,14 @@ describe('stations', () => {
     const me = currentPlayerId(base);
     const { state } = rollOnto(owning(base, me, [4]), 4);
     assert.equal(state.phase, 'awaiting_end_turn');
-    assert.deepEqual(types(state), ['BUILD_STATION', 'END_TURN']);
+    assert.deepEqual(coreTypes(state), ['BUILD_STATION', 'END_TURN']);
     const built = act(state, { type: 'BUILD_STATION', playerId: me, tile: 4 });
     assert.equal(built.state.stations[4], me);
     assert.equal(built.state.players[me].cash, 20000 - 800);
     assert.deepEqual(built.events, [{ type: 'station_built', playerId: me, tile: 4, cost: 800 }]);
     assert.equal(built.state.phase, 'awaiting_end_turn');
     assert.deepEqual(checkInvariants(board, built.state), []);
-    assert.deepEqual(types(built.state), ['END_TURN']);
+    assert.deepEqual(coreTypes(built.state), ['END_TURN']);
   });
 
   it('can be built right after buying the property you landed on', () => {
@@ -328,7 +331,14 @@ describe('landing fee with development and stations', () => {
     const { state } = rollOnto(prepared, 4);
     const after = act(state, { type: 'COLLECT_FEE', playerId: owner }).state;
     assert.equal(after.phase, 'insolvent');
-    assert.deepEqual(after.pending, { type: 'insolvent', tile: 4, payer: visitor, creditor: owner, amount: 1200 });
+    assert.deepEqual(after.pending, {
+      type: 'insolvent',
+      cause: 'fee',
+      tile: 4,
+      payer: visitor,
+      creditor: owner,
+      amount: 1200,
+    });
     assert.equal(after.players[visitor].cash, 1199);
   });
 });
