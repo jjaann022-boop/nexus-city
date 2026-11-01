@@ -33,6 +33,8 @@ function inOffice(state: GameState): GameState {
 }
 
 const types = (state: GameState): string[] => getLegalActions(board, state).map((a) => a.type);
+/** The legal office actions that spend money on building (mortgage actions are covered in mortgage.test.ts). */
+const buildTypes = (state: GameState): string[] => types(state).filter((t) => t === 'DEVELOP' || t === 'BUILD_STATION');
 
 describe('economy formulas', () => {
   it('development costs 50% and a station 100% of the original price', () => {
@@ -194,7 +196,7 @@ describe('development', () => {
 
     const poor = withCash(state, me, 299);
     expectCode(() => act(poor, { type: 'DEVELOP', playerId: me, tile: 1 }), 'insufficient_cash'); // costs 300
-    assert.deepEqual(types(poor), ['LEAVE_OFFICE']);
+    assert.deepEqual(buildTypes(poor), []);
     const exact = withCash(state, me, 300);
     assert.equal(act(exact, { type: 'DEVELOP', playerId: me, tile: 1 }).state.players[me].cash, 0);
   });
@@ -257,7 +259,7 @@ describe('stations', () => {
     const base = newGame(2);
     const me = currentPlayerId(base);
     const s = inOffice(owning(base, me, [4, 6, 10]));
-    assert.deepEqual(types(s), ['BUILD_STATION', 'BUILD_STATION', 'BUILD_STATION', 'LEAVE_OFFICE']);
+    assert.deepEqual(buildTypes(s), ['BUILD_STATION', 'BUILD_STATION', 'BUILD_STATION']);
     const after = act(s, { type: 'BUILD_STATION', playerId: me, tile: 6 }).state;
     assert.equal(after.stations[6], me);
     assert.equal(after.players[me].cash, 20000 - 900);
@@ -270,7 +272,7 @@ describe('stations', () => {
     const me = currentPlayerId(base);
     const poor = inOffice(withCash(owning(base, me, [4]), me, 799));
     expectCode(() => act(poor, { type: 'BUILD_STATION', playerId: me, tile: 4 }), 'insufficient_cash');
-    assert.deepEqual(types(poor), ['LEAVE_OFFICE']);
+    assert.deepEqual(buildTypes(poor), []);
     const exact = inOffice(withCash(owning(base, me, [4]), me, 800));
     assert.equal(act(exact, { type: 'BUILD_STATION', playerId: me, tile: 4 }).state.players[me].cash, 0);
   });

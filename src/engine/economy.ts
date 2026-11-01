@@ -44,13 +44,35 @@ export function landingFee(board: Board, state: GameState, tile: number): number
   return fee;
 }
 
-/** True when `playerId` owns every property of the district. */
+/**
+ * Total paid for the development steps of a property.
+ * NOTE: derived from the level because every step costs the standard amount today. When discount
+ * vouchers arrive (phase 3) the amount actually paid must be tracked per property instead.
+ */
+export function developmentPaid(board: Board, state: GameState, tile: number): number {
+  return (levelOf(state, tile) - 1) * developmentCost(propertyPrice(board, tile));
+}
+
+/**
+ * What the owner receives from the bank for mortgaging (and repays to redeem):
+ * original price + development paid + the station's price if one stands on the property.
+ */
+export function mortgageValue(board: Board, state: GameState, tile: number): number {
+  const price = propertyPrice(board, tile);
+  const station = state.stations[tile] !== undefined ? stationCost(price) : 0;
+  return price + developmentPaid(board, state, tile) + station;
+}
+
+/**
+ * True when `playerId` owns every property of the district. A mortgaged property does not
+ * count: while one is mortgaged the district cannot be developed.
+ */
 export function ownsFullDistrict(board: Board, state: GameState, playerId: number, district: District): boolean {
   let found = 0;
   for (let i = 0; i < board.tiles.length; i++) {
     const t = board.tiles[i];
     if (t.kind === 'property' && t.district === district) {
-      if (state.owners[i] !== playerId) return false;
+      if (state.owners[i] !== playerId || state.mortgaged[i] !== undefined) return false;
       found++;
     }
   }

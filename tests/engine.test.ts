@@ -560,7 +560,7 @@ describe('random play simulation', () => {
   }
 
   it('keeps every invariant and conserves money over many random games', () => {
-    const totals = { bought: 0, collected: 0, waived: 0, gateBonuses: 0, developed: 0, stations: 0, offices: 0, turns: 0 };
+    const totals = { bought: 0, collected: 0, waived: 0, gateBonuses: 0, developed: 0, stations: 0, offices: 0, mortgages: 0, redeems: 0, freeLandings: 0, turns: 0 };
 
     for (let seed = 1; seed <= 120; seed++) {
       const count = 2 + (seed % 5);
@@ -597,6 +597,14 @@ describe('random play simulation', () => {
           } else if (e.type === 'bought') {
             spent += e.price;
             totals.bought++;
+          } else if (e.type === 'mortgaged') {
+            received += e.amount;
+            totals.mortgages++;
+          } else if (e.type === 'redeemed') {
+            spent += e.amount;
+            totals.redeems++;
+          } else if (e.type === 'no_fee_mortgaged') {
+            totals.freeLandings++;
           } else if (e.type === 'developed') {
             spent += e.cost;
             totals.developed++;
@@ -617,8 +625,8 @@ describe('random play simulation', () => {
         assert.deepEqual(problems, [], `seed ${seed}, step ${step}`);
       }
 
-      // Money only enters through gate bonuses and leaves through purchases, development and
-      // stations (all paid to the bank); fees just move it between players.
+      // Money only enters through gate bonuses and mortgages, and leaves through purchases,
+      // development, stations and redemptions (all with the bank); fees just move it between players.
       const cash = s.players.reduce((sum, p) => sum + p.cash, 0);
       assert.equal(cash, count * RULES.startingCash + received - spent, `money not conserved (seed ${seed})`);
       const debt = s.players.reduce((sum, p) => sum + p.bankDebt, 0);
@@ -633,6 +641,9 @@ describe('random play simulation', () => {
     assert.ok(totals.offices > 20, 'bots should visit the office');
     assert.ok(totals.developed > 5, 'bots should develop properties');
     assert.ok(totals.stations > 5, 'bots should build stations');
+    assert.ok(totals.mortgages > 5, 'bots should mortgage');
+    assert.ok(totals.redeems > 0, 'bots should redeem');
+    assert.ok(totals.freeLandings > 0, 'someone should land on a mortgaged property');
   });
 });
 

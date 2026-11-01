@@ -1,5 +1,13 @@
 import { validateBoard } from './board.ts';
-import { developmentCost, landingFee, levelOf, ownsFullDistrict, propertyPrice, stationCost } from './economy.ts';
+import {
+  developmentCost,
+  landingFee,
+  levelOf,
+  mortgageValue,
+  ownsFullDistrict,
+  propertyPrice,
+  stationCost,
+} from './economy.ts';
 import { EngineError } from './errors.ts';
 import type { EngineErrorCode } from './errors.ts';
 import { rollDice } from './rng.ts';
@@ -100,6 +108,7 @@ export function createGame(board: Board, players: PlayerSetup[], seed: number): 
     owners: {},
     levels: {},
     stations: {},
+    mortgaged: {},
     lastRoll: null,
     openingRolls,
   };
@@ -127,6 +136,9 @@ function developmentProblem(board: Board, s: GameState, playerId: number, tile: 
   if (s.owners[tile] !== playerId) {
     return { code: 'not_allowed', message: 'only the owner can develop a property' };
   }
+  if (s.mortgaged[tile] !== undefined) {
+    return { code: 'not_allowed', message: 'a mortgaged property cannot be developed' };
+  }
   const district = board.tiles[tile].district as District;
   if (!ownsFullDistrict(board, s, playerId, district)) {
     return { code: 'not_allowed', message: `development needs all the properties of the ${district} district` };
@@ -147,12 +159,43 @@ function stationProblem(board: Board, s: GameState, playerId: number, tile: numb
   if (s.owners[tile] !== playerId) {
     return { code: 'not_allowed', message: 'only the owner can build a station on a property' };
   }
+  if (s.mortgaged[tile] !== undefined) {
+    return { code: 'not_allowed', message: 'a station cannot be built on a mortgaged property' };
+  }
   if (s.stations[tile] !== undefined) {
     return { code: 'not_allowed', message: 'this property already has a station' };
   }
   const cost = stationCost(propertyPrice(board, tile));
   if (s.players[playerId].cash < cost) {
     return { code: 'insufficient_cash', message: `needs ${cost}, has ${s.players[playerId].cash}` };
+  }
+  return null;
+}
+
+function mortgageProblem(board: Board, s: GameState, playerId: number, tile: number): Problem | null {
+  const bad = propertyTargetProblem(board, tile);
+  if (bad) return bad;
+  if (s.owners[tile] !== playerId) {
+    return { code: 'not_allowed', message: 'only the owner can mortgage a property' };
+  }
+  if (s.mortgaged[tile] !== undefined) {
+    return { code: 'not_allowed', message: 'this property is already mortgaged' };
+  }
+  return null;
+}
+
+function redeemProblem(board: Board, s: GameState, playerId: number, tile: number): Problem | null {
+  const bad = propertyTargetProblem(board, tile);
+  if (bad) return bad;
+  if (s.owners[tile] !== playerId) {
+    return { code: 'not_allowed', message: 'only the owner can redeem a property' };
+  }
+  const amount = s.mortgaged[tile];
+  if (amount === undefined) {
+    return { code: 'not_allowed', message: 'this property is not mortgaged' };
+  }
+  if (s.players[playerId].cash < amount) {
+    return { code: 'insufficient_cash', message: `needs ${amount}, has ${s.players[playerId].cash}` };
   }
   return null;
 }
@@ -198,6 +241,8 @@ export function getLegalActions(board: Board, state: GameState): Action[] {
         if (state.owners[tile] !== me) continue;
         if (developmentProblem(board, state, me, tile) === null) actions.push({ type: 'DEVELOP', playerId: me, tile });
         if (stationProblem(board, state, me, tile) === null) actions.push({ type: 'BUILD_STATION', playerId: me, tile });
+        if (mortgageProblem(board, state, me, tile) === null) actions.push({ type: 'MORTGAGE', playerId: me, tile });
+        if (redeemProblem(board, state, me, tile) === null) actions.push({ type: 'REDEEM', playerId: me, tile });
       }
       actions.push({ type: 'LEAVE_OFFICE', playerId: me });
       return actions;
@@ -239,6 +284,12 @@ export function applyAction(board: Board, state: GameState, action: Action): Ste
       break;
     case 'BUILD_STATION':
       doBuildStation(board, s, action.playerId, action.tile, events);
+      break;
+    case 'MORTGAGE':
+      doMortgage(board, s, action.playerId, action.tile, events);
+      break;
+    case 'REDEEM':
+      doRedeem(board, s, action.playerId, action.tile, events);
       break;
     case 'LEAVE_OFFICE':
       doLeaveOffice(s, action.playerId, events);
@@ -324,6 +375,10 @@ function resolveLanding(board: Board, s: GameState, player: PlayerState, events:
       s.pending = { type: 'purchase', tile: tileIndex, price };
       s.phase = 'awaiting_purchase';
     } else if (owner === player.id) {
+      s.phase = 'awaiting_end_turn';
+    } else if (s.mortgaged[tileIndex] !== undefined) {
+      // A mortgaged property charges no landing fee.
+      events.push({ type: 'no_fee_mortgaged', payer: player.id, owner, tile: tileIndex });
       s.phase = 'awaiting_end_turn';
     } else {
       // Fee depends on development level and on a station (economy.ts). The owner may waive it.
@@ -464,6 +519,30 @@ function doBuildStation(board: Board, s: GameState, playerId: number, tile: numb
   events.push({ type: 'station_built', playerId, tile, cost });
 }
 
+function doMortgage(board: Board, s: GameState, playerId: number, tile: number, events: GameEvent[]): void {
+  requirePhase(s, 'in_office');
+  const player = requireCurrentPlayer(s, playerId);
+  const problem = mortgageProblem(board, s, playerId, tile);
+  if (problem) throw new EngineError(problem.code, problem.message);
+
+  const amount = mortgageValue(board, s, tile);
+  player.cash += amount;
+  s.mortgaged[tile] = amount;
+  events.push({ type: 'mortgaged', playerId, tile, amount });
+}
+
+function doRedeem(board: Board, s: GameState, playerId: number, tile: number, events: GameEvent[]): void {
+  requirePhase(s, 'in_office');
+  const player = requireCurrentPlayer(s, playerId);
+  const problem = redeemProblem(board, s, playerId, tile);
+  if (problem) throw new EngineError(problem.code, problem.message);
+
+  const amount = s.mortgaged[tile];
+  player.cash -= amount;
+  delete s.mortgaged[tile];
+  events.push({ type: 'redeemed', playerId, tile, amount });
+}
+
 function doLeaveOffice(s: GameState, playerId: number, events: GameEvent[]): void {
   requirePhase(s, 'in_office');
   requireCurrentPlayer(s, playerId);
@@ -545,6 +624,14 @@ export function checkInvariants(board: Board, state: GameState): string[] {
       }
     }
 
+    for (const [key, amount] of Object.entries(state.mortgaged)) {
+      const tile = board.tiles[Number(key)];
+      if (!tile || tile.kind !== 'property' || state.owners[Number(key)] === undefined) {
+        problems.push(`mortgaged lists tile ${key}, which is not an owned property`);
+      }
+      if (!Number.isInteger(amount) || amount <= 0) problems.push(`tile ${key} has invalid mortgage amount ${String(amount)}`);
+    }
+
     const pending = state.pending;
     const me = state.turnOrder[state.turnIndex];
     switch (state.phase) {
@@ -583,6 +670,7 @@ export function checkInvariants(board: Board, state: GameState): string[] {
           problems.push('pending fee does not match its tile');
         }
         if (state.owners[pending.tile] !== pending.owner) problems.push('pending fee owner does not own the tile');
+        if (state.mortgaged[pending.tile] !== undefined) problems.push('pending fee is on a mortgaged tile');
         if (pending.payer !== me) problems.push('pending fee payer must be the current player');
         if (pending.payer === pending.owner) problems.push('pending fee payer and owner are the same player');
         break;

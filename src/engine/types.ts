@@ -85,6 +85,12 @@ export interface GameState {
    * this always equals owners[tile] (separate station ownership is an open rule).
    */
   stations: Record<number, number>;
+  /**
+   * Tile index -> amount the owner received from the bank when mortgaging (and must repay to redeem).
+   * A mortgaged property keeps its level and station but charges no landing fee and does not
+   * count toward owning a whole district.
+   */
+  mortgaged: Record<number, number>;
   lastRoll: [number, number] | null;
   openingRolls: OpeningRoll[];
 }
@@ -99,6 +105,10 @@ export type Action =
   | { type: 'DEVELOP'; playerId: number; tile: number }
   /** Build the station on an owned property: inside the office, or on the property you just landed on. */
   | { type: 'BUILD_STATION'; playerId: number; tile: number }
+  /** Mortgage a property (with its level and station) to the bank. Only inside the office. */
+  | { type: 'MORTGAGE'; playerId: number; tile: number }
+  /** Repay the bank the exact mortgage amount. Only inside the office. */
+  | { type: 'REDEEM'; playerId: number; tile: number }
   | { type: 'LEAVE_OFFICE'; playerId: number }
   | { type: 'END_TURN'; playerId: number };
 
@@ -117,6 +127,9 @@ export type GameEvent =
   | { type: 'office_entered'; playerId: number }
   | { type: 'developed'; playerId: number; tile: number; level: number; cost: number }
   | { type: 'station_built'; playerId: number; tile: number; cost: number }
+  | { type: 'mortgaged'; playerId: number; tile: number; amount: number }
+  | { type: 'redeemed'; playerId: number; tile: number; amount: number }
+  | { type: 'no_fee_mortgaged'; payer: number; owner: number; tile: number }
   | { type: 'office_left'; playerId: number }
   | { type: 'turn_ended'; playerId: number }
   | { type: 'turn_started'; playerId: number };
