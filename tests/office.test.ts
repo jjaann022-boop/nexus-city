@@ -55,16 +55,16 @@ describe('economy formulas', () => {
     assert.equal(ownsFullDistrict(board, owning(s, me, COMMERCIAL), me, 'tech'), false);
   });
 
-  it('landing fee = property part by level (+ half the station cost when a station stands there)', () => {
+  it('landing fee = 10% / 20% / 30% by level (+ 5% of the price when a station stands there)', () => {
     const base = owning(newGame(2), 0, COMMERCIAL);
     const p = price(4); // 800
     const cases: [level: 1 | 2 | 3, station: boolean, fee: number][] = [
-      [1, false, 800],
-      [2, false, 1200],
-      [3, false, 1600],
-      [1, true, 1200],
-      [2, true, 1600],
-      [3, true, 2000],
+      [1, false, 80],
+      [2, false, 160],
+      [3, false, 240],
+      [1, true, 120],
+      [2, true, 200],
+      [3, true, 280],
     ];
     for (const [level, station, fee] of cases) {
       const s = patch(base, (d) => {
@@ -289,18 +289,18 @@ describe('stations', () => {
     s = act(s, { type: 'DEVELOP', playerId: me, tile: 4 }).state;
     assert.equal(s.levels[4], 3);
     assert.equal(s.stations[4], me);
-    assert.equal(landingFee(board, s, 4), 1600 + 400);
+    assert.equal(landingFee(board, s, 4), 240 + 40);
   });
 });
 
 describe('landing fee with development and stations', () => {
   const cases: [string, (d: GameState) => void, number][] = [
-    ['base level', () => undefined, 800],
-    ['level 2', (d) => void (d.levels[4] = 2), 1200],
-    ['level 3', (d) => void (d.levels[4] = 3), 1600],
-    ['base level + station', (d) => void (d.stations[4] = 0), 1200],
-    ['level 2 + station', (d) => void ((d.levels[4] = 2), (d.stations[4] = 0)), 1600],
-    ['level 3 + station', (d) => void ((d.levels[4] = 3), (d.stations[4] = 0)), 2000],
+    ['base level', () => undefined, 80],
+    ['level 2', (d) => void (d.levels[4] = 2), 160],
+    ['level 3', (d) => void (d.levels[4] = 3), 240],
+    ['base level + station', (d) => void (d.stations[4] = 0), 120],
+    ['level 2 + station', (d) => void ((d.levels[4] = 2), (d.stations[4] = 0)), 200],
+    ['level 3 + station', (d) => void ((d.levels[4] = 3), (d.stations[4] = 0)), 280],
   ];
 
   for (const [name, change, fee] of cases) {
@@ -327,7 +327,7 @@ describe('landing fee with development and stations', () => {
     const base = newGame(2);
     const visitor = currentPlayerId(base);
     const owner = 1 - visitor;
-    const prepared = patch(withCash(owning(base, owner, COMMERCIAL), visitor, 1199), (d) => void (d.levels[4] = 2));
+    const prepared = patch(withCash(owning(base, owner, COMMERCIAL), visitor, 159), (d) => void (d.levels[4] = 2));
     const { state } = rollOnto(prepared, 4);
     const after = act(state, { type: 'COLLECT_FEE', playerId: owner }).state;
     assert.equal(after.phase, 'insolvent');
@@ -337,9 +337,9 @@ describe('landing fee with development and stations', () => {
       tile: 4,
       payer: visitor,
       creditor: owner,
-      amount: 1200,
+      amount: 160,
     });
-    assert.equal(after.players[visitor].cash, 1199);
+    assert.equal(after.players[visitor].cash, 159);
   });
 });
 

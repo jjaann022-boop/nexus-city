@@ -57,9 +57,9 @@ function inOffice(state: GameState, id: number): GameState {
 }
 
 describe('rent amount', () => {
-  it('is 10% of the original price', () => {
-    assert.equal(rentAmount(800), 80);
-    assert.equal(rentAmount(1000), 100);
+  it('is 50% of the original price', () => {
+    assert.equal(rentAmount(800), 400);
+    assert.equal(rentAmount(1000), 500);
   });
 });
 
@@ -189,14 +189,14 @@ describe('renting a listed property', () => {
 });
 
 describe('rent at the gate', () => {
-  it('the tenant pays 10% to the owner each time he completes a lap, after the gate bonus', () => {
+  it('the tenant pays 50% to the owner each time he completes a lap, after the gate bonus', () => {
     const s = leased(world(), 4, T, null);
     const { state, events } = completeLap(s, T);
-    assert.equal(state.players[T].cash, 20000 + 10000 - 80);
-    assert.equal(state.players[O].cash, 20000 + 80);
+    assert.equal(state.players[T].cash, 20000 + 10000 - 400);
+    assert.equal(state.players[O].cash, 20000 + 400);
     assert.deepEqual(
       events.filter((e) => e.type === 'rent_paid'),
-      [{ type: 'rent_paid', tenant: T, owner: O, tile: 4, amount: 80, lapsLeft: null }],
+      [{ type: 'rent_paid', tenant: T, owner: O, tile: 4, amount: 400, lapsLeft: null }],
     );
     assert.ok(kinds(events).indexOf('gate_bonus') < kinds(events).indexOf('rent_paid'));
     assert.deepEqual(checkInvariants(board, state), []);
@@ -208,7 +208,7 @@ describe('rent at the gate', () => {
     const { state, events } = act(ready, { type: 'ROLL', playerId: T });
     assert.equal(state.players[T].position, 2);
     assert.equal(events.filter((e) => e.type === 'rent_paid').length, 1);
-    assert.equal(state.players[O].cash, 20000 + 80);
+    assert.equal(state.players[O].cash, 20000 + 400);
   });
 
   it('is not due when the move does not complete a lap, or for anyone but the tenant', () => {
@@ -233,15 +233,15 @@ describe('rent at the gate', () => {
     assert.deepEqual(
       second.events.filter((e) => e.type === 'rent_paid' || e.type === 'lease_ended'),
       [
-        { type: 'rent_paid', tenant: T, owner: O, tile: 4, amount: 80, lapsLeft: 0 },
+        { type: 'rent_paid', tenant: T, owner: O, tile: 4, amount: 400, lapsLeft: 0 },
         { type: 'lease_ended', tile: 4, owner: O, tenant: T, reason: 'term' },
       ],
     );
-    assert.equal(second.state.players[O].cash, 20000 + 160);
+    assert.equal(second.state.players[O].cash, 20000 + 800);
 
     const third = completeLap(second.state, T);
     assert.equal(kinds(third.events).includes('rent_paid'), false);
-    assert.equal(third.state.players[O].cash, 20000 + 160);
+    assert.equal(third.state.players[O].cash, 20000 + 800);
     s = third.state;
     assert.deepEqual(checkInvariants(board, s), []);
   });
@@ -249,7 +249,7 @@ describe('rent at the gate', () => {
   it('an open-ended lease keeps charging every lap', () => {
     let s = leased(world(), 4, T, null);
     for (let lap = 1; lap <= 4; lap++) s = completeLap(s, T).state;
-    assert.equal(s.players[O].cash, 20000 + 4 * 80);
+    assert.equal(s.players[O].cash, 20000 + 4 * 400);
     assert.deepEqual(s.leases[4], { tenant: T, lapsLeft: null });
   });
 
@@ -260,30 +260,30 @@ describe('rent at the gate', () => {
       events.filter((e) => e.type === 'rent_paid').map((e) => (e as { tile: number }).tile),
       [4, 6],
     );
-    assert.equal(state.players[O].cash, 20000 + 80 + 90);
-    assert.equal(state.players[T].cash, 30000 - 170);
+    assert.equal(state.players[O].cash, 20000 + 400 + 450);
+    assert.equal(state.players[T].cash, 30000 - 850);
   });
 
   it('rent is paid out of cash, after the bank takes its debt from the bonus', () => {
     const s = patch(leased(world(), 4, T, null), (d) => void (d.players[T].bankDebt = 10000));
     const { state } = completeLap(s, T);
     assert.equal(state.players[T].bankDebt, 0);
-    assert.equal(state.players[T].cash, 20000 - 80, 'the bonus went to the bank, rent came from cash');
+    assert.equal(state.players[T].cash, 20000 - 400, 'the bonus went to the bank, rent came from cash');
   });
 
   it('can be paid with exactly the cash on hand', () => {
-    const s = patch(withCash(leased(world(), 4, T, null), T, 80), (d) => void (d.players[T].bankDebt = 10000));
+    const s = patch(withCash(leased(world(), 4, T, null), T, 400), (d) => void (d.players[T].bankDebt = 10000));
     const { state } = completeLap(s, T);
     assert.equal(state.players[T].cash, 0);
     assert.equal(state.phase, 'awaiting_end_turn');
   });
 
   it('a tenant who cannot pay halts the game before his landing is resolved', () => {
-    const s = patch(withCash(leased(world(), 4, T, 3), T, 79), (d) => void (d.players[T].bankDebt = 10000));
+    const s = patch(withCash(leased(world(), 4, T, 3), T, 399), (d) => void (d.players[T].bankDebt = 10000));
     const { state, events } = completeLap(s, T);
     assert.equal(state.phase, 'insolvent');
-    assert.deepEqual(state.pending, { type: 'insolvent', cause: 'rent', tile: 4, payer: T, creditor: O, amount: 80 });
-    assert.equal(state.players[T].cash, 79);
+    assert.deepEqual(state.pending, { type: 'insolvent', cause: 'rent', tile: 4, payer: T, creditor: O, amount: 400 });
+    assert.equal(state.players[T].cash, 399);
     assert.equal(state.players[O].cash, 20000);
     assert.deepEqual(state.leases[4], { tenant: T, lapsLeft: 3 }, 'the lap is not counted');
     assert.equal(state.players[T].position, 0, 'the move itself happened');
@@ -293,13 +293,13 @@ describe('rent at the gate', () => {
   });
 
   it('rent already paid stays paid when a later lease cannot be', () => {
-    // Rent 80 (tile 4) is paid, rent 90 (tile 6) is not: cash 80 after the debt takes the whole bonus.
-    const s = patch(withCash(leased(leased(world(), 4, T, null), 6, T, null), T, 80), (d) => void (d.players[T].bankDebt = 10000));
+    // Rent 400 (tile 4) is paid, rent 450 (tile 6) is not: cash 400 after the debt takes the whole bonus.
+    const s = patch(withCash(leased(leased(world(), 4, T, null), 6, T, null), T, 400), (d) => void (d.players[T].bankDebt = 10000));
     const { state } = completeLap(s, T);
     assert.equal(state.phase, 'insolvent');
     assert.equal(state.pending?.type === 'insolvent' && state.pending.tile, 6);
     assert.equal(state.players[T].cash, 0);
-    assert.equal(state.players[O].cash, 20000 + 80);
+    assert.equal(state.players[O].cash, 20000 + 400);
   });
 });
 
@@ -309,17 +309,17 @@ describe('landing on a leased property', () => {
   it('the visitor pays the normal landing fee to the tenant, not to the owner', () => {
     const s = leased(world(), 4, T, null);
     const landed = land(s, V);
-    assert.deepEqual(landed.pending, { type: 'fee', tile: 4, payer: V, owner: T, amount: 800 });
+    assert.deepEqual(landed.pending, { type: 'fee', tile: 4, payer: V, owner: T, amount: 80 });
     const paid = act(landed, { type: 'COLLECT_FEE', playerId: T }).state;
-    assert.equal(paid.players[V].cash, 20000 - 800);
-    assert.equal(paid.players[T].cash, 20000 + 800);
+    assert.equal(paid.players[V].cash, 20000 - 80);
+    assert.equal(paid.players[T].cash, 20000 + 80);
     assert.equal(paid.players[O].cash, 20000, 'the owner gets nothing at landing time');
     assert.deepEqual(checkInvariants(board, paid), []);
   });
 
   it('uses the level and station of the property', () => {
     const s = patch(leased(world(), 4, T, null), (d) => void ((d.levels[4] = 3), (d.stations[4] = O)));
-    assert.equal((land(s, V).pending as { amount: number }).amount, 1600 + 400);
+    assert.equal((land(s, V).pending as { amount: number }).amount, 240 + 40);
   });
 
   it('the tenant, not the owner, decides whether to waive it', () => {
@@ -355,13 +355,13 @@ describe('landing on a leased property', () => {
 
   it('a property that is only listed still pays the owner', () => {
     const listed = act(world(), { type: 'LIST_FOR_RENT', playerId: O, tile: 4, laps: 2 }).state;
-    assert.deepEqual(land(listed, V).pending, { type: 'fee', tile: 4, payer: V, owner: O, amount: 800 });
+    assert.deepEqual(land(listed, V).pending, { type: 'fee', tile: 4, payer: V, owner: O, amount: 80 });
   });
 
   it('a visitor who cannot pay halts the game with the tenant as creditor', () => {
-    const landed = land(withCash(leased(world(), 4, T, null), V, 700), V);
+    const landed = land(withCash(leased(world(), 4, T, null), V, 79), V);
     const after = act(landed, { type: 'COLLECT_FEE', playerId: T }).state;
-    assert.deepEqual(after.pending, { type: 'insolvent', cause: 'fee', tile: 4, payer: V, creditor: T, amount: 800 });
+    assert.deepEqual(after.pending, { type: 'insolvent', cause: 'fee', tile: 4, payer: V, creditor: T, amount: 80 });
     assert.deepEqual(checkInvariants(board, after), []);
   });
 });
@@ -373,7 +373,7 @@ describe('ending a lease', () => {
     assert.equal(state.leases[4], undefined);
     assert.deepEqual(events, [{ type: 'lease_ended', tile: 4, owner: O, tenant: T, reason: 'owner' }]);
     const landed = rollOnto(asCurrent(state, V), 4).state;
-    assert.deepEqual(landed.pending, { type: 'fee', tile: 4, payer: V, owner: O, amount: 800 });
+    assert.deepEqual(landed.pending, { type: 'fee', tile: 4, payer: V, owner: O, amount: 80 });
 
     const open = act(leased(world(), 4, T, null), { type: 'END_LEASE', playerId: O, tile: 4 }).state;
     assert.deepEqual(open.leases, {});
@@ -466,14 +466,14 @@ describe('purity and saves', () => {
   it('rejects a pending fee whose receiver ignores the lease', () => {
     const landed = rollOnto(asCurrent(leased(world(), 4, T, null), V), 4).state;
     assert.doesNotThrow(() => deserializeGame(board, serializeGame(landed)));
-    const wrong = patch(landed, (d) => void (d.pending = { type: 'fee', tile: 4, payer: V, owner: O, amount: 800 }));
+    const wrong = patch(landed, (d) => void (d.pending = { type: 'fee', tile: 4, payer: V, owner: O, amount: 80 }));
     assert.throws(() => deserializeGame(board, serializeGame(wrong)), SaveError);
-    const ownerPays = patch(landed, (d) => void (d.pending = { type: 'fee', tile: 4, payer: O, owner: T, amount: 800 }));
+    const ownerPays = patch(landed, (d) => void (d.pending = { type: 'fee', tile: 4, payer: O, owner: T, amount: 80 }));
     assert.throws(() => deserializeGame(board, serializeGame(ownerPays)), SaveError);
   });
 
   it('rejects a rent insolvency that matches no lease', () => {
-    const s = patch(withCash(leased(world(), 4, T, 3), T, 79), (d) => void (d.players[T].bankDebt = 10000));
+    const s = patch(withCash(leased(world(), 4, T, 3), T, 399), (d) => void (d.players[T].bankDebt = 10000));
     const halted = completeLap(s, T).state;
     assert.doesNotThrow(() => deserializeGame(board, serializeGame(halted)));
     const bad = patch(halted, (d) => void delete d.leases[4]);

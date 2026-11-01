@@ -200,7 +200,7 @@ describe('what a mortgage changes', () => {
 
   it('levels already built elsewhere in the district stay and still charge their fee', () => {
     const { state, me, other } = setup();
-    let s = act(state, { type: 'DEVELOP', playerId: me, tile: 4 }).state; // level 2: fee 1200
+    let s = act(state, { type: 'DEVELOP', playerId: me, tile: 4 }).state; // level 2: fee 160
     s = act(s, { type: 'MORTGAGE', playerId: me, tile: 8 }).state;
     assert.equal(s.levels[4], 2);
     // The visitor (the other player) lands on tile 4.
@@ -210,7 +210,7 @@ describe('what a mortgage changes', () => {
       d.players[me].position = OFFICE;
     });
     const { state: landed } = rollOnto(turn, 4);
-    assert.deepEqual(landed.pending, { type: 'fee', tile: 4, payer: other, owner: me, amount: 1200 });
+    assert.deepEqual(landed.pending, { type: 'fee', tile: 4, payer: other, owner: me, amount: 160 });
   });
 
   it('a mortgaged property cannot be developed or get a station, even from the office', () => {

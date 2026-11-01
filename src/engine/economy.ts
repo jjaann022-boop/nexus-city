@@ -1,8 +1,8 @@
 import { RULES } from './rules.ts';
 import type { Board, District, GameState } from './types.ts';
 
-// Board validation guarantees property prices are positive multiples of 10, so every
-// percentage used below (10%, 50%, 100%, 150%, 200%) produces a whole number of liras.
+// Board validation guarantees property prices are positive multiples of 20, so every
+// percentage used below (5%, 10%, 20%, 30%, 50%, 100%) produces a whole number of liras.
 function percentOf(price: number, percent: number): number {
   const value = (price * percent) / 100;
   if (!Number.isInteger(value)) throw new Error(`${percent}% of ${price} is not a whole number`);
@@ -23,7 +23,7 @@ export function stationCost(price: number): number {
   return percentOf(price, RULES.stationCostPercent);
 }
 
-/** Rent paid by a tenant to the owner each lap. */
+/** Rent paid by a tenant to the owner each lap (50% of the original price). */
 export function rentAmount(price: number): number {
   return percentOf(price, RULES.rentPercent);
 }
@@ -34,9 +34,9 @@ export function levelOf(state: GameState, tile: number): number {
 }
 
 /**
- * Landing fee on an owned property (brief sections 6-7):
- * the property part by level (100% / 150% / 200% of the original price)
- * plus, if a station stands on it, half of the station's build cost.
+ * Landing fee on an owned property:
+ * the property part by level (10% / 20% / 30% of the original price)
+ * plus, if a station stands on it, 5% of the original price (the station's build cost).
  * Development never changes the station part.
  */
 export function landingFee(board: Board, state: GameState, tile: number): number {

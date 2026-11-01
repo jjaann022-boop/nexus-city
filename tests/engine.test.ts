@@ -27,6 +27,8 @@ import {
 // Tile 4 is a commercial property priced 800 on the placeholder board.
 const PROP = 4;
 const PROP_PRICE = board.tiles[PROP].price as number;
+// Base-level landing fee is 10% of the original price.
+const PROP_FEE = PROP_PRICE / 10;
 
 describe('random numbers', () => {
   it('are deterministic for the same state', () => {
@@ -68,10 +70,10 @@ describe('board validation', () => {
       (b) => void (b.tiles[8] = { name: 'x', kind: 'utility', district: 'commercial' }),
       /commercial needs exactly 5 property/,
     ],
-    ['odd price', (b) => void (b.tiles[1].price = 601), /multiple of 10/],
-    ['even price that is not a multiple of 10', (b) => void (b.tiles[1].price = 602), /multiple of 10/],
-    ['zero price', (b) => void (b.tiles[1].price = 0), /multiple of 10/],
-    ['property without price', (b) => void delete b.tiles[1].price, /multiple of 10/],
+    ['odd price', (b) => void (b.tiles[1].price = 601), /multiple of 20/],
+    ['multiple of 10 but not of 20', (b) => void (b.tiles[1].price = 610), /multiple of 20/],
+    ['zero price', (b) => void (b.tiles[1].price = 0), /multiple of 20/],
+    ['property without price', (b) => void delete b.tiles[1].price, /multiple of 20/],
     ['unknown kind', (b) => void (b.tiles[2].kind = 'castle'), /unknown kind/],
     ['corner inside a district', (b) => void (b.tiles[9].district = 'tech'), /must not belong to a district/],
     ['utility with a price', (b) => void (b.tiles[5].price = 100), /only properties have a price/],
@@ -341,10 +343,10 @@ describe('landing fee on another player\'s property', () => {
     return { state: rollOnto(owned, PROP).state, payer, owner };
   }
 
-  it('asks the owner; base-level fee is 100% of the original price', () => {
+  it('asks the owner; base-level fee is 10% of the original price', () => {
     const { state, payer, owner } = landOnOwned();
     assert.equal(state.phase, 'awaiting_fee_decision');
-    assert.deepEqual(state.pending, { type: 'fee', tile: PROP, payer, owner, amount: PROP_PRICE });
+    assert.deepEqual(state.pending, { type: 'fee', tile: PROP, payer, owner, amount: PROP_FEE });
     assert.deepEqual(getLegalActions(board, state), [
       { type: 'COLLECT_FEE', playerId: owner },
       { type: 'WAIVE_FEE', playerId: owner },
@@ -354,11 +356,11 @@ describe('landing fee on another player\'s property', () => {
   it('moves the fee from the visitor to the owner when collected', () => {
     const { state, payer, owner } = landOnOwned();
     const { state: after, events } = act(state, { type: 'COLLECT_FEE', playerId: owner });
-    assert.equal(after.players[payer].cash, 20000 - PROP_PRICE);
-    assert.equal(after.players[owner].cash, 20000 + PROP_PRICE);
+    assert.equal(after.players[payer].cash, 20000 - PROP_FEE);
+    assert.equal(after.players[owner].cash, 20000 + PROP_FEE);
     assert.equal(after.phase, 'awaiting_end_turn');
     assert.equal(after.pending, null);
-    assert.deepEqual(events, [{ type: 'fee_paid', payer, owner, tile: PROP, amount: PROP_PRICE }]);
+    assert.deepEqual(events, [{ type: 'fee_paid', payer, owner, tile: PROP, amount: PROP_FEE }]);
   });
 
   it('moves nothing when the owner waives it', () => {
@@ -367,7 +369,7 @@ describe('landing fee on another player\'s property', () => {
     assert.equal(after.players[payer].cash, 20000);
     assert.equal(after.players[owner].cash, 20000);
     assert.equal(after.phase, 'awaiting_end_turn');
-    assert.deepEqual(events, [{ type: 'fee_waived', payer, owner, tile: PROP, amount: PROP_PRICE }]);
+    assert.deepEqual(events, [{ type: 'fee_waived', payer, owner, tile: PROP, amount: PROP_FEE }]);
   });
 
   it('only the owner may decide', () => {
@@ -387,11 +389,11 @@ describe('landing fee on another player\'s property', () => {
   it('halts in the insolvent phase, moving no money, when the visitor cannot pay', () => {
     const { state, payer, owner } = landOnOwned();
     const broke = patch(state, (d) => {
-      d.players[payer].cash = PROP_PRICE - 1;
+      d.players[payer].cash = PROP_FEE - 1;
     });
     const { state: after, events } = act(broke, { type: 'COLLECT_FEE', playerId: owner });
     assert.equal(after.phase, 'insolvent');
-    assert.equal(after.players[payer].cash, PROP_PRICE - 1);
+    assert.equal(after.players[payer].cash, PROP_FEE - 1);
     assert.equal(after.players[owner].cash, 20000);
     assert.deepEqual(after.pending, {
       type: 'insolvent',
@@ -399,10 +401,10 @@ describe('landing fee on another player\'s property', () => {
       tile: PROP,
       payer,
       creditor: owner,
-      amount: PROP_PRICE,
+      amount: PROP_FEE,
     });
     assert.deepEqual(events, [
-      { type: 'insolvent', cause: 'fee', payer, creditor: owner, tile: PROP, amount: PROP_PRICE },
+      { type: 'insolvent', cause: 'fee', payer, creditor: owner, tile: PROP, amount: PROP_FEE },
     ]);
     assert.deepEqual(getLegalActions(board, after), []);
     assert.deepEqual(checkInvariants(board, after), []);
