@@ -4,7 +4,7 @@ import { checkInvariants, currentPlayerId, getLegalActions } from '../src/engine
 import { developmentCost, landingFee, ownsFullDistrict, stationCost } from '../src/engine/economy.ts';
 import { deserializeGame, SaveError, serializeGame } from '../src/engine/save.ts';
 import type { Action, GameState } from '../src/engine/types.ts';
-import { act, board, deepFreeze, expectCode, newGame, patch, rollOnto } from './helpers.ts';
+import { act, board, deepFreeze, expectCode, newGame, patch, rollOnto, setLevel } from './helpers.ts';
 
 // Placeholder board: commercial properties are tiles 1,2,4,6,8 priced 600,700,800,900,1000.
 const COMMERCIAL = [1, 2, 4, 6, 8];
@@ -68,7 +68,7 @@ describe('economy formulas', () => {
     ];
     for (const [level, station, fee] of cases) {
       const s = patch(base, (d) => {
-        if (level > 1) d.levels[4] = level as 2 | 3;
+        if (level > 1) setLevel(d, 4, level as 2 | 3);
         if (station) d.stations[4] = 0;
       });
       assert.equal(landingFee(board, s, 4), fee, `level ${level}, station ${station}`);
@@ -296,11 +296,11 @@ describe('stations', () => {
 describe('landing fee with development and stations', () => {
   const cases: [string, (d: GameState) => void, number][] = [
     ['base level', () => undefined, 80],
-    ['level 2', (d) => void (d.levels[4] = 2), 160],
-    ['level 3', (d) => void (d.levels[4] = 3), 240],
+    ['level 2', (d) => void (setLevel(d, 4, 2)), 160],
+    ['level 3', (d) => void (setLevel(d, 4, 3)), 240],
     ['base level + station', (d) => void (d.stations[4] = 0), 120],
-    ['level 2 + station', (d) => void ((d.levels[4] = 2), (d.stations[4] = 0)), 200],
-    ['level 3 + station', (d) => void ((d.levels[4] = 3), (d.stations[4] = 0)), 280],
+    ['level 2 + station', (d) => void ((setLevel(d, 4, 2)), (d.stations[4] = 0)), 200],
+    ['level 3 + station', (d) => void ((setLevel(d, 4, 3)), (d.stations[4] = 0)), 280],
   ];
 
   for (const [name, change, fee] of cases) {
@@ -327,7 +327,7 @@ describe('landing fee with development and stations', () => {
     const base = newGame(2);
     const visitor = currentPlayerId(base);
     const owner = 1 - visitor;
-    const prepared = patch(withCash(owning(base, owner, COMMERCIAL), visitor, 159), (d) => void (d.levels[4] = 2));
+    const prepared = patch(withCash(owning(base, owner, COMMERCIAL), visitor, 159), (d) => void (setLevel(d, 4, 2)));
     const { state } = rollOnto(prepared, 4);
     const after = act(state, { type: 'COLLECT_FEE', playerId: owner }).state;
     assert.equal(after.phase, 'insolvent');

@@ -1,21 +1,10 @@
 import { EngineError } from './errors.ts';
-import { DISTRICTS } from './types.ts';
+import { validateDeck } from './cards.ts';
+import { DISTRICTS, TILE_KINDS } from './types.ts';
 import type { Board, District, Tile, TileKind } from './types.ts';
 
 /** A roll is at most 12, so with 13+ tiles one roll can never pass the gate twice. */
 export const MIN_TILES = 13;
-
-const TILE_KINDS: readonly TileKind[] = [
-  'gate',
-  'municipality',
-  'financial_center',
-  'transport_center',
-  'real_estate_office',
-  'property',
-  'luck_or_mystery',
-  'utility',
-  'city_project',
-];
 
 // Corners and the real estate office: exactly one each, never inside a district.
 const UNIQUE_KINDS: readonly TileKind[] = [
@@ -50,6 +39,7 @@ export function validateBoard(raw: unknown): string[] {
   if (!isRecord(meta) || typeof meta.temporary !== 'boolean' || typeof meta.note !== 'string') {
     errors.push('board.meta must be { temporary: boolean, note: string }');
   }
+  errors.push(...validateDeck(raw.luckCards, 'luckCards'), ...validateDeck(raw.mysteryCards, 'mysteryCards'));
   if (!Array.isArray(raw.tiles)) {
     errors.push('board.tiles must be an array');
     return errors;

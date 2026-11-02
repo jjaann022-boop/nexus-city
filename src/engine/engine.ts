@@ -1,17 +1,21 @@
 import { validateBoard } from './board.ts';
 import {
-  developmentCost,
+  developmentPaid,
+  developmentStepCost,
+  hasUtility,
   landingFee,
   levelOf,
   mortgageValue,
   ownsFullDistrict,
   propertyPrice,
+  purchaseCost,
   rentAmount,
+  stationBuildCost,
   stationCost,
 } from './economy.ts';
 import { EngineError } from './errors.ts';
 import type { EngineErrorCode } from './errors.ts';
-import { rollDice } from './rng.ts';
+import { nextFloat, rollDice } from './rng.ts';
 import { RULES } from './rules.ts';
 import type {
   Action,
@@ -19,19 +23,28 @@ import type {
   District,
   GameEvent,
   GameState,
+  LuckEffect,
+  MysteryEffect,
   OpeningRoll,
   Pending,
   Phase,
   PlayerSetup,
   PlayerState,
   StepResult,
+  TileKind,
+  VoucherKind,
 } from './types.ts';
+import { VOUCHER_KINDS } from './types.ts';
 
 const MAX_OPENING_ROUNDS = 50;
 
 // State is plain JSON, so a JSON round trip is a safe deep copy everywhere (browser, WebView, Node).
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function emptyVouchers(): Record<VoucherKind, number> {
+  return Object.fromEntries(VOUCHER_KINDS.map((kind) => [kind, 0])) as Record<VoucherKind, number>;
 }
 
 export function currentPlayerId(state: GameState): number {
@@ -100,6 +113,8 @@ export function createGame(board: Board, players: PlayerSetup[], seed: number): 
         position: 0,
         cash: RULES.startingCash,
         bankDebt: 0,
+        utilities: [],
+        vouchers: emptyVouchers(),
       }),
     ),
     turnOrder,
@@ -110,6 +125,7 @@ export function createGame(board: Board, players: PlayerSetup[], seed: number): 
     levels: {},
     stations: {},
     mortgaged: {},
+    developmentPaid: {},
     leaseOffers: {},
     leases: {},
     lastRoll: null,
@@ -149,14 +165,20 @@ function developmentProblem(board: Board, s: GameState, playerId: number, tile: 
   if (levelOf(s, tile) >= RULES.maxLevel) {
     return { code: 'not_allowed', message: 'the property is already at the highest level' };
   }
-  const cost = developmentCost(propertyPrice(board, tile));
+  const cost = developmentStepCost(board, s, playerId, tile);
   if (s.players[playerId].cash < cost) {
     return { code: 'insufficient_cash', message: `needs ${cost}, has ${s.players[playerId].cash}` };
   }
   return null;
 }
 
-function stationProblem(board: Board, s: GameState, playerId: number, tile: number): Problem | null {
+function stationProblem(
+  board: Board,
+  s: GameState,
+  playerId: number,
+  tile: number,
+  viaOffice: boolean,
+): Problem | null {
   const bad = propertyTargetProblem(board, tile);
   if (bad) return bad;
   if (s.owners[tile] !== playerId) {
@@ -168,7 +190,7 @@ function stationProblem(board: Board, s: GameState, playerId: number, tile: numb
   if (s.stations[tile] !== undefined) {
     return { code: 'not_allowed', message: 'this property already has a station' };
   }
-  const cost = stationCost(propertyPrice(board, tile));
+  const cost = stationBuildCost(board, s, playerId, tile, viaOffice);
   if (s.players[playerId].cash < cost) {
     return { code: 'insufficient_cash', message: `needs ${cost}, has ${s.players[playerId].cash}` };
   }
@@ -315,6 +337,13 @@ function phaseActions(board: Board, state: GameState): Action[] {
       actions.push({ type: 'DECLINE_PURCHASE', playerId: me });
       return actions;
     }
+    case 'awaiting_utility': {
+      if (!pending || pending.type !== 'utility') return [];
+      const actions: Action[] = [];
+      if (state.players[me].cash >= pending.cost) actions.push({ type: 'ACTIVATE_UTILITY', playerId: me });
+      actions.push({ type: 'SKIP_UTILITY', playerId: me });
+      return actions;
+    }
     case 'awaiting_fee_decision': {
       if (!pending || pending.type !== 'fee') return [];
       return [
@@ -326,7 +355,7 @@ function phaseActions(board: Board, state: GameState): Action[] {
       const actions: Action[] = [];
       // A station may be built on an owned property you are standing on (just landed or just bought).
       const here = state.players[me].position;
-      if (stationProblem(board, state, me, here) === null) {
+      if (stationProblem(board, state, me, here, false) === null) {
         actions.push({ type: 'BUILD_STATION', playerId: me, tile: here });
       }
       actions.push({ type: 'END_TURN', playerId: me });
@@ -337,7 +366,7 @@ function phaseActions(board: Board, state: GameState): Action[] {
       for (let tile = 0; tile < board.tiles.length; tile++) {
         if (state.owners[tile] !== me) continue;
         if (developmentProblem(board, state, me, tile) === null) actions.push({ type: 'DEVELOP', playerId: me, tile });
-        if (stationProblem(board, state, me, tile) === null) actions.push({ type: 'BUILD_STATION', playerId: me, tile });
+        if (stationProblem(board, state, me, tile, true) === null) actions.push({ type: 'BUILD_STATION', playerId: me, tile });
         if (mortgageProblem(board, state, me, tile) === null) actions.push({ type: 'MORTGAGE', playerId: me, tile });
         if (redeemProblem(board, state, me, tile) === null) actions.push({ type: 'REDEEM', playerId: me, tile });
       }
@@ -365,7 +394,7 @@ export function applyAction(board: Board, state: GameState, action: Action): Ste
       doRoll(board, s, action.playerId, events);
       break;
     case 'BUY':
-      doBuy(s, action.playerId, events);
+      doBuy(board, s, action.playerId, events);
       break;
     case 'DECLINE_PURCHASE':
       doDeclinePurchase(s, action.playerId, events);
@@ -375,6 +404,12 @@ export function applyAction(board: Board, state: GameState, action: Action): Ste
       break;
     case 'WAIVE_FEE':
       doWaiveFee(s, action.playerId, events);
+      break;
+    case 'ACTIVATE_UTILITY':
+      doActivateUtility(s, action.playerId, events);
+      break;
+    case 'SKIP_UTILITY':
+      doSkipUtility(s, action.playerId, events);
       break;
     case 'DEVELOP':
       doDevelop(board, s, action.playerId, action.tile, events);
@@ -443,13 +478,29 @@ function doRoll(board: Board, s: GameState, playerId: number, events: GameEvent[
   const total = r.dice[0] + r.dice[1];
   events.push({ type: 'rolled', playerId, dice: r.dice, total });
 
-  // Doubles grant nothing extra. Movement is clockwise = increasing index.
+  // Doubles grant nothing extra.
+  moveForward(board, s, player, total, events, 0);
+}
+
+/**
+ * Moves the player `steps` tiles clockwise (= increasing index), then resolves the landing.
+ * Used by the dice and by cards that move the player; passing the gate counts either way.
+ * `depth` is 0 for the dice and above 0 for a move caused by a card.
+ */
+function moveForward(
+  board: Board,
+  s: GameState,
+  player: PlayerState,
+  steps: number,
+  events: GameEvent[],
+  depth: number,
+): void {
   const from = player.position;
-  const raw = from + total;
+  const raw = from + steps;
   const tileCount = board.tiles.length;
   const to = raw % tileCount;
   player.position = to;
-  events.push({ type: 'moved', playerId, from, to });
+  events.push({ type: 'moved', playerId: player.id, from, to });
 
   // Passing the gate, or arriving on it after a full lap, pays once. Starting a turn on it pays nothing.
   if (raw >= tileCount) {
@@ -458,7 +509,7 @@ function doRoll(board: Board, s: GameState, playerId: number, events: GameEvent[
     if (!payRents(board, s, player, events)) return;
   }
 
-  resolveLanding(board, s, player, events);
+  resolveLanding(board, s, player, events, depth);
 }
 
 function awardGateBonus(player: PlayerState, events: GameEvent[]): void {
@@ -468,10 +519,18 @@ function awardGateBonus(player: PlayerState, events: GameEvent[]): void {
   const received = bonus - debtPaid;
   player.cash += received;
   events.push({ type: 'gate_bonus', playerId: player.id, bonus, debtPaid, received });
+
+  // Luck card "pass ticket": +300 on the first pass of the gate after drawing it.
+  if (player.vouchers.gate_ticket > 0) {
+    player.vouchers.gate_ticket -= 1;
+    player.cash += RULES.gateTicketAmount;
+    events.push({ type: 'voucher_used', playerId: player.id, voucher: 'gate_ticket', amount: RULES.gateTicketAmount });
+    events.push({ type: 'bank_transfer', playerId: player.id, amount: RULES.gateTicketAmount, reason: 'gate_ticket' });
+  }
 }
 
 // Only the tile where movement ends is activated; tiles passed over do nothing.
-function resolveLanding(board: Board, s: GameState, player: PlayerState, events: GameEvent[]): void {
+function resolveLanding(board: Board, s: GameState, player: PlayerState, events: GameEvent[], depth: number): void {
   const tileIndex = player.position;
   const tile = board.tiles[tileIndex];
   events.push({ type: 'landed', playerId: player.id, tile: tileIndex });
@@ -482,9 +541,9 @@ function resolveLanding(board: Board, s: GameState, player: PlayerState, events:
   }
 
   if (tile.kind === 'property') {
-    const price = tile.price as number;
     const owner: number | undefined = s.owners[tileIndex];
     if (owner === undefined) {
+      const price = purchaseCost(board, s, player.id, tileIndex);
       s.pending = { type: 'purchase', tile: tileIndex, price };
       s.phase = 'awaiting_purchase';
     } else if (owner === player.id) {
@@ -502,28 +561,208 @@ function resolveLanding(board: Board, s: GameState, player: PlayerState, events:
       } else {
         // Fee depends on development level and on a station (economy.ts). Its receiver may waive it.
         const amount = landingFee(board, s, tileIndex);
-        s.pending = { type: 'fee', tile: tileIndex, payer: player.id, owner: recipient, amount };
-        s.phase = 'awaiting_fee_decision';
-        events.push({ type: 'fee_due', payer: player.id, owner: recipient, tile: tileIndex, amount });
+        if (player.vouchers.fee_exemption_active > 0) {
+          // Luck card "no bills day": the first fee owed this turn is waived.
+          player.vouchers.fee_exemption_active -= 1;
+          events.push({ type: 'fee_exempted', payer: player.id, owner: recipient, tile: tileIndex, amount });
+          s.phase = 'awaiting_end_turn';
+        } else {
+          s.pending = { type: 'fee', tile: tileIndex, payer: player.id, owner: recipient, amount };
+          s.phase = 'awaiting_fee_decision';
+          events.push({ type: 'fee_due', payer: player.id, owner: recipient, tile: tileIndex, amount });
+        }
       }
     }
     return;
   }
 
   if (tile.kind === 'real_estate_office') {
-    // Development and station building happen here. Mortgage, rent and sales join in later phases.
+    // Development, stations, mortgage and rent happen here. Sales join in a later phase.
     s.phase = 'in_office';
     events.push({ type: 'office_entered', playerId: player.id });
     return;
   }
 
-  // Municipality, financial center, transport center, utilities, projects and
-  // luck/mystery tiles arrive in later phases. Landing on them does nothing yet.
+  if (tile.kind === 'utility') {
+    if (player.utilities.includes(tileIndex)) {
+      // Activated: the park pays every time it is used; the other utilities work through discounts.
+      s.phase = 'awaiting_end_turn';
+      if (tile.district === 'residential') {
+        player.cash += RULES.parkBonus;
+        events.push({ type: 'utility_used', playerId: player.id, tile: tileIndex, amount: RULES.parkBonus });
+        events.push({ type: 'bank_transfer', playerId: player.id, amount: RULES.parkBonus, reason: 'park' });
+      }
+    } else {
+      s.pending = { type: 'utility', tile: tileIndex, cost: RULES.utilityActivationCost };
+      s.phase = 'awaiting_utility';
+    }
+    return;
+  }
+
+  if (tile.kind === 'luck_or_mystery') {
+    // A card never sends the player to another card tile in a chain: a card move that ends here does nothing.
+    s.phase = 'awaiting_end_turn';
+    if (depth === 0) drawCard(board, s, player, events);
+    return;
+  }
+
+  // Municipality, financial center, transport center and city projects arrive in later phases.
+  // Landing on them does nothing yet.
   events.push({ type: 'tile_not_implemented', playerId: player.id, tile: tileIndex, kind: tile.kind });
   s.phase = 'awaiting_end_turn';
 }
 
-function doBuy(s: GameState, playerId: number, events: GameEvent[]): void {
+// ---------------------------------------------------------------------------
+// Cards (brief sections 12 and 13). The deck is random with replacement: every draw can be any card.
+// ---------------------------------------------------------------------------
+
+function drawCard(board: Board, s: GameState, player: PlayerState, events: GameEvent[]): void {
+  const [pick, rng1] = nextFloat(s.rngState);
+  const [index, rng2] = nextFloat(rng1);
+  s.rngState = rng2;
+  const fromLuck = pick * 100 < RULES.luckDeckChancePercent;
+  if (fromLuck) {
+    const card = board.luckCards[Math.floor(index * board.luckCards.length)];
+    events.push({ type: 'card_drawn', playerId: player.id, deck: 'luck', cardId: card.id });
+    applyLuckEffect(s, player, card.id, card.effect, events);
+  } else {
+    const card = board.mysteryCards[Math.floor(index * board.mysteryCards.length)];
+    events.push({ type: 'card_drawn', playerId: player.id, deck: 'mystery', cardId: card.id });
+    applyMysteryEffect(board, s, player, card.id, card.effect, events);
+  }
+}
+
+function giveVoucher(player: PlayerState, voucher: VoucherKind, events: GameEvent[]): void {
+  player.vouchers[voucher] += 1;
+  events.push({ type: 'voucher_gained', playerId: player.id, voucher });
+}
+
+function applyLuckEffect(
+  s: GameState,
+  player: PlayerState,
+  cardId: string,
+  effect: LuckEffect,
+  events: GameEvent[],
+): void {
+  switch (effect.type) {
+    case 'gain':
+      gainFromBank(player, effect.amount, cardId, events);
+      return;
+    case 'gain_if_owns_property': {
+      const ownsOne = Object.values(s.owners).some((owner) => owner === player.id);
+      gainFromBank(player, ownsOne ? effect.amount : effect.otherwise, cardId, events);
+      return;
+    }
+    case 'pay':
+      payBankByCard(s, player, effect.amount, cardId, events);
+      return;
+    case 'voucher':
+      // "No bills day" is armed now and becomes active at the start of the player's next turn.
+      giveVoucher(player, effect.voucher === 'fee_exemption' ? 'fee_exemption_armed' : effect.voucher, events);
+      return;
+  }
+}
+
+function gainFromBank(player: PlayerState, amount: number, reason: string, events: GameEvent[]): void {
+  player.cash += amount;
+  events.push({ type: 'bank_transfer', playerId: player.id, amount, reason });
+}
+
+/** A luck card orders the player to pay the bank. The "municipal exemption" voucher waives the first such amount. */
+function payBankByCard(s: GameState, player: PlayerState, amount: number, cardId: string, events: GameEvent[]): void {
+  if (player.vouchers.card_payment_exemption > 0) {
+    player.vouchers.card_payment_exemption -= 1;
+    events.push({ type: 'voucher_used', playerId: player.id, voucher: 'card_payment_exemption', amount });
+    return;
+  }
+  if (player.cash >= amount) {
+    player.cash -= amount;
+    events.push({ type: 'bank_transfer', playerId: player.id, amount: -amount, reason: cardId });
+    return;
+  }
+  // Cannot pay: nothing moves and the game halts until the insolvency rules arrive (phase 4).
+  s.pending = { type: 'insolvent', cause: 'card', tile: player.position, payer: player.id, creditor: 'bank', amount };
+  s.phase = 'insolvent';
+  events.push({
+    type: 'insolvent',
+    cause: 'card',
+    payer: player.id,
+    creditor: 'bank',
+    tile: player.position,
+    amount,
+  });
+}
+
+function applyMysteryEffect(
+  board: Board,
+  s: GameState,
+  player: PlayerState,
+  cardId: string,
+  effect: MysteryEffect,
+  events: GameEvent[],
+): void {
+  switch (effect.type) {
+    case 'extra_roll':
+      // One more throw and one more move, not a whole extra turn.
+      s.phase = 'awaiting_roll';
+      return;
+    case 'move_to_nearest':
+      moveToNearest(board, s, player, effect.kind, events);
+      return;
+    case 'voucher':
+      giveVoucher(player, effect.voucher, events);
+      return;
+    case 'market_report':
+      events.push({
+        type: 'market_report',
+        playerId: player.id,
+        rentListings: Object.keys(s.leaseOffers)
+          .map(Number)
+          .sort((a, b) => a - b),
+      });
+      return;
+    case 'not_implemented':
+      events.push({ type: 'card_not_implemented', playerId: player.id, cardId });
+      return;
+  }
+}
+
+/** Moves clockwise to the nearest tile of that kind ahead of the player and activates it. */
+function moveToNearest(board: Board, s: GameState, player: PlayerState, kind: TileKind, events: GameEvent[]): void {
+  const tileCount = board.tiles.length;
+  for (let distance = 1; distance <= tileCount; distance++) {
+    if (board.tiles[(player.position + distance) % tileCount].kind === kind) {
+      moveForward(board, s, player, distance, events, 1);
+      return;
+    }
+  }
+}
+
+function doActivateUtility(s: GameState, playerId: number, events: GameEvent[]): void {
+  requirePhase(s, 'awaiting_utility');
+  const player = requireCurrentPlayer(s, playerId);
+  const pending = requirePending(s, 'utility');
+  if (player.cash < pending.cost) {
+    throw new EngineError('insufficient_cash', `needs ${pending.cost}, has ${player.cash}`);
+  }
+  player.cash -= pending.cost;
+  player.utilities.push(pending.tile);
+  events.push({ type: 'bank_transfer', playerId, amount: -pending.cost, reason: 'utility_activation' });
+  events.push({ type: 'utility_activated', playerId, tile: pending.tile });
+  s.pending = null;
+  s.phase = 'awaiting_end_turn';
+}
+
+function doSkipUtility(s: GameState, playerId: number, events: GameEvent[]): void {
+  requirePhase(s, 'awaiting_utility');
+  requireCurrentPlayer(s, playerId);
+  const pending = requirePending(s, 'utility');
+  events.push({ type: 'utility_skipped', playerId, tile: pending.tile });
+  s.pending = null;
+  s.phase = 'awaiting_end_turn';
+}
+
+function doBuy(board: Board, s: GameState, playerId: number, events: GameEvent[]): void {
   requirePhase(s, 'awaiting_purchase');
   const player = requireCurrentPlayer(s, playerId);
   const pending = requirePending(s, 'purchase');
@@ -533,6 +772,13 @@ function doBuy(s: GameState, playerId: number, events: GameEvent[]): void {
   player.cash -= pending.price;
   s.owners[pending.tile] = playerId;
   events.push({ type: 'bought', playerId, tile: pending.tile, price: pending.price });
+  const withoutVoucher = purchaseCost(board, s, playerId, pending.tile, false);
+  const shopping = propertyPrice(board, pending.tile) - withoutVoucher;
+  if (shopping > 0) events.push({ type: 'utility_used', playerId, tile: pending.tile, amount: shopping });
+  if (player.vouchers.purchase_discount > 0) {
+    player.vouchers.purchase_discount -= 1;
+    events.push({ type: 'voucher_used', playerId, voucher: 'purchase_discount', amount: withoutVoucher - pending.price });
+  }
   s.pending = null;
   s.phase = 'awaiting_end_turn';
 }
@@ -616,10 +862,16 @@ function doDevelop(board: Board, s: GameState, playerId: number, tile: number, e
   const problem = developmentProblem(board, s, playerId, tile);
   if (problem) throw new EngineError(problem.code, problem.message);
 
-  const cost = developmentCost(propertyPrice(board, tile));
+  const cost = developmentStepCost(board, s, playerId, tile);
   const level = (levelOf(s, tile) + 1) as 2 | 3;
+  if (player.vouchers.development_discount > 0) {
+    player.vouchers.development_discount -= 1;
+    const amount = developmentStepCost(board, s, playerId, tile, false) - cost;
+    events.push({ type: 'voucher_used', playerId, voucher: 'development_discount', amount });
+  }
   player.cash -= cost;
   s.levels[tile] = level;
+  s.developmentPaid[tile] = developmentPaid(s, tile) + cost;
   events.push({ type: 'developed', playerId, tile, level, cost });
 }
 
@@ -632,10 +884,21 @@ function doBuildStation(board: Board, s: GameState, playerId: number, tile: numb
   if (s.phase === 'awaiting_end_turn' && tile !== player.position) {
     throw new EngineError('not_allowed', 'outside the office a station can only be built where you stand');
   }
-  const problem = stationProblem(board, s, playerId, tile);
+  const viaOffice = s.phase === 'in_office';
+  const problem = stationProblem(board, s, playerId, tile, viaOffice);
   if (problem) throw new EngineError(problem.code, problem.message);
 
-  const cost = stationCost(propertyPrice(board, tile));
+  const cost = stationBuildCost(board, s, playerId, tile, viaOffice);
+  if (viaOffice && player.vouchers.station_discount > 0) {
+    player.vouchers.station_discount -= 1;
+    const amount = stationBuildCost(board, s, playerId, tile, viaOffice, false) - cost;
+    events.push({ type: 'voucher_used', playerId, voucher: 'station_discount', amount });
+  }
+  const district = board.tiles[tile].district as District;
+  if (hasUtility(board, player, district) && (district === 'tech' || district === 'industrial')) {
+    const full = stationBuildCost(board, s, playerId, tile, viaOffice, false);
+    events.push({ type: 'utility_used', playerId, tile, amount: stationCost(propertyPrice(board, tile)) - full });
+  }
   player.cash -= cost;
   s.stations[tile] = playerId;
   events.push({ type: 'station_built', playerId, tile, cost });
@@ -753,7 +1016,12 @@ function doEndTurn(s: GameState, playerId: number, events: GameEvent[]): void {
   requirePhase(s, 'awaiting_end_turn');
   requireCurrentPlayer(s, playerId);
   events.push({ type: 'turn_ended', playerId });
+  // "No bills day" lasts one turn only.
+  s.players[playerId].vouchers.fee_exemption_active = 0;
   s.turnIndex = (s.turnIndex + 1) % s.turnOrder.length;
+  const next = s.players[currentPlayerId(s)];
+  next.vouchers.fee_exemption_active += next.vouchers.fee_exemption_armed;
+  next.vouchers.fee_exemption_armed = 0;
   s.phase = 'awaiting_roll';
   s.pending = null;
   s.lastRoll = null;
@@ -785,6 +1053,14 @@ export function checkInvariants(board: Board, state: GameState): string[] {
       if (!Number.isInteger(p.position) || p.position < 0 || p.position >= tileCount) {
         problems.push(`player ${i} has invalid position ${p.position}`);
       }
+      for (const kind of VOUCHER_KINDS) {
+        const n = p.vouchers?.[kind];
+        if (!Number.isInteger(n) || n < 0) problems.push(`player ${i} has invalid ${kind} count ${String(n)}`);
+      }
+      if (new Set(p.utilities).size !== p.utilities.length) problems.push(`player ${i} lists a utility twice`);
+      for (const tile of p.utilities) {
+        if (board.tiles[tile]?.kind !== 'utility') problems.push(`player ${i} lists non-utility tile ${tile}`);
+      }
     });
 
     const sortedOrder = [...state.turnOrder].sort((a, b) => a - b);
@@ -812,6 +1088,13 @@ export function checkInvariants(board: Board, state: GameState): string[] {
         problems.push(`levels lists tile ${key}, which is not an owned property`);
       }
       if (level !== 2 && level !== 3) problems.push(`tile ${key} has invalid level ${String(level)}`);
+    }
+    for (const key of Object.keys(state.levels)) {
+      if (state.developmentPaid[Number(key)] === undefined) problems.push(`developed tile ${key} has no development cost record`);
+    }
+    for (const [key, paid] of Object.entries(state.developmentPaid)) {
+      if (state.levels[Number(key)] === undefined) problems.push(`developmentPaid lists undeveloped tile ${key}`);
+      if (!Number.isInteger(paid) || paid < 0) problems.push(`tile ${key} has invalid development cost ${String(paid)}`);
     }
     for (const [key, owner] of Object.entries(state.stations)) {
       const tile = board.tiles[Number(key)];
@@ -881,7 +1164,7 @@ export function checkInvariants(board: Board, state: GameState): string[] {
           break;
         }
         const tile = board.tiles[pending.tile];
-        if (!tile || tile.kind !== 'property' || tile.price !== pending.price) {
+        if (!tile || tile.kind !== 'property' || purchaseCost(board, state, me, pending.tile) !== pending.price) {
           problems.push('pending purchase does not match its tile');
         }
         if (state.owners[pending.tile] !== undefined) problems.push('pending purchase is on an owned tile');
@@ -908,9 +1191,22 @@ export function checkInvariants(board: Board, state: GameState): string[] {
         if (pending.payer === pending.owner) problems.push('pending fee payer and owner are the same player');
         break;
       }
+      case 'awaiting_utility': {
+        if (!pending || pending.type !== 'utility') {
+          problems.push('awaiting_utility needs a pending utility');
+          break;
+        }
+        if (board.tiles[pending.tile]?.kind !== 'utility') problems.push('pending utility is not on a utility tile');
+        if (state.players[me].position !== pending.tile) problems.push('pending utility is not on the current player position');
+        if (state.players[me].utilities.includes(pending.tile)) problems.push('pending utility is already activated');
+        if (pending.cost !== RULES.utilityActivationCost) problems.push('pending utility has the wrong cost');
+        break;
+      }
       case 'insolvent':
         if (!pending || pending.type !== 'insolvent') {
           problems.push('insolvent phase needs a pending insolvency');
+        } else if (pending.cause === 'card') {
+          if (pending.creditor !== 'bank') problems.push('a card insolvency is owed to the bank');
         } else if (pending.cause === 'rent') {
           const lease = state.leases[pending.tile];
           if (!lease || lease.tenant !== pending.payer || state.owners[pending.tile] !== pending.creditor) {

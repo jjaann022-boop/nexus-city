@@ -1,0 +1,163 @@
+[
+  {
+    "id": "city_prize",
+    "name": "جائزة المدينة",
+    "effect": {
+      "type": "gain",
+      "amount": 500
+    }
+  },
+  {
+    "id": "lucky_day",
+    "name": "يوم محظوظ",
+    "effect": {
+      "type": "gain",
+      "amount": 300
+    }
+  },
+  {
+    "id": "achievement_bonus",
+    "name": "مكافأة الإنجاز",
+    "effect": {
+      "type": "gain",
+      "amount": 700
+    }
+  },
+  {
+    "id": "surprise_gift",
+    "name": "هدية مفاجئة",
+    "effect": {
+      "type": "gain",
+      "amount": 200
+    }
+  },
+  {
+    "id": "commercial_support",
+    "name": "دعم تجاري",
+    "effect": {
+      "type": "gain",
+      "amount": 400
+    }
+  },
+  {
+    "id": "utility_bill",
+    "name": "فاتورة خدمات",
+    "effect": {
+      "type": "pay",
+      "amount": 200
+    }
+  },
+  {
+    "id": "emergency_tax",
+    "name": "ضريبة طارئة",
+    "effect": {
+      "type": "pay",
+      "amount": 400
+    }
+  },
+  {
+    "id": "urgent_maintenance",
+    "name": "صيانة عاجلة",
+    "effect": {
+      "type": "pay",
+      "amount": 300
+    }
+  },
+  {
+    "id": "municipal_violation",
+    "name": "مخالفة بلدية",
+    "effect": {
+      "type": "pay",
+      "amount": 500
+    }
+  },
+  {
+    "id": "trade_loss",
+    "name": "خسارة تجارية",
+    "effect": {
+      "type": "pay",
+      "amount": 600
+    }
+  },
+  {
+    "id": "property_compensation",
+    "name": "تعويض عقاري",
+    "effect": {
+      "type": "gain_if_owns_property",
+      "amount": 300,
+      "otherwise": 100
+    }
+  },
+  {
+    "id": "successful_contract",
+    "name": "عقد ناجح",
+    "effect": {
+      "type": "gain",
+      "amount": 500
+    }
+  },
+  {
+    "id": "financial_compensation",
+    "name": "تعويض مالي",
+    "effect": {
+      "type": "gain",
+      "amount": 200
+    }
+  },
+  {
+    "id": "big_luck",
+    "name": "الحظ الكبير",
+    "effect": {
+      "type": "gain",
+      "amount": 1000
+    }
+  },
+  {
+    "id": "purchase_discount",
+    "name": "خصم المشتريات",
+    "effect": {
+      "type": "voucher",
+      "voucher": "purchase_discount"
+    }
+  },
+  {
+    "id": "pass_ticket",
+    "name": "تذكرة المرور",
+    "effect": {
+      "type": "voucher",
+      "voucher": "gate_ticket"
+    }
+  },
+  {
+    "id": "no_bills_day",
+    "name": "يوم بلا فواتير",
+    "effect": {
+      "type": "voucher",
+      "voucher": "fee_exemption"
+    }
+  },
+  {
+    "id": "saving_bonus",
+    "name": "مكافأة التوفير",
+    "effect": {
+      "type": "gain",
+      "amount": 400
+    }
+  },
+  {
+    "id": "municipal_exemption",
+    "name": "إعفاء بلدي",
+    "effect": {
+      "type": "voucher",
+      "voucher": "card_payment_exemption"
+    }
+  },
+  {
+    "id": "golden_opportunity",
+    "name": "فرصة ذهبية",
+    "effect": {
+      "type": "gain",
+      "amount": 600
+    }
+  }
+]

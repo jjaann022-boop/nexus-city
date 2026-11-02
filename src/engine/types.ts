@@ -12,25 +12,90 @@ export type TileKind =
   | 'utility'
   | 'city_project';
 
+export const TILE_KINDS: readonly TileKind[] = [
+  'gate',
+  'municipality',
+  'financial_center',
+  'transport_center',
+  'real_estate_office',
+  'property',
+  'luck_or_mystery',
+  'utility',
+  'city_project',
+];
+
 export interface Tile {
   name: string;
   kind: TileKind;
   /** Required for property, luck_or_mystery, utility and city_project; forbidden otherwise. */
   district?: District;
-  /** Original price. Required (positive, even) for property; forbidden otherwise. */
+  /** Original price. Required (positive multiple of 20) for property; forbidden otherwise. */
   price?: number;
+}
+
+export type LuckVoucher = 'purchase_discount' | 'gate_ticket' | 'fee_exemption' | 'card_payment_exemption';
+export type MysteryVoucher = 'station_discount' | 'development_discount';
+
+export type LuckEffect =
+  | { type: 'gain'; amount: number }
+  | { type: 'pay'; amount: number }
+  | { type: 'gain_if_owns_property'; amount: number; otherwise: number }
+  | { type: 'voucher'; voucher: LuckVoucher };
+
+export type MysteryEffect =
+  | { type: 'extra_roll' }
+  | { type: 'move_to_nearest'; kind: TileKind }
+  | { type: 'voucher'; voucher: MysteryVoucher }
+  | { type: 'market_report' }
+  // Needs the negotiation system (offers, auctions) or other rules that are not built yet.
+  | { type: 'not_implemented' };
+
+export interface LuckCard {
+  id: string;
+  name: string;
+  effect: LuckEffect;
+}
+
+export interface MysteryCard {
+  id: string;
+  name: string;
+  effect: MysteryEffect;
 }
 
 export interface Board {
   meta: { temporary: boolean; note: string };
   /** Clockwise order around the track. Index 0 is the gate. */
   tiles: Tile[];
+  /** Brief section 12: the approved luck cards. */
+  luckCards: LuckCard[];
+  /** Brief section 13: the approved mystery box cards. */
+  mysteryCards: MysteryCard[];
 }
 
 export interface PlayerSetup {
   name: string;
   color: string;
 }
+
+/** Counts of one-time benefits a player holds. */
+export type VoucherKind =
+  | 'purchase_discount' // luck 15: -200 on the next purchase from the bank
+  | 'gate_ticket' // luck 16: +300 on the next pass of the gate
+  | 'fee_exemption_armed' // luck 17: becomes active at the start of the player's next turn
+  | 'fee_exemption_active' // waives the first landing fee owed during this turn, then expires with the turn
+  | 'card_payment_exemption' // luck 19: waives the next amount a luck card makes the player pay the bank
+  | 'station_discount' // mystery 10: -200 on one station built in the office
+  | 'development_discount'; // mystery 17: -200 on one development step
+
+export const VOUCHER_KINDS: readonly VoucherKind[] = [
+  'purchase_discount',
+  'gate_ticket',
+  'fee_exemption_armed',
+  'fee_exemption_active',
+  'card_payment_exemption',
+  'station_discount',
+  'development_discount',
+];
 
 export interface PlayerState {
   /** Equals the index in GameState.players. */
@@ -41,6 +106,9 @@ export interface PlayerState {
   cash: number;
   /** Interest-free bank loan still owed. */
   bankDebt: number;
+  /** Tiles of the utilities this player has activated (brief section 9). */
+  utilities: number[];
+  vouchers: Record<VoucherKind, number>;
 }
 
 export type Pending =
@@ -48,15 +116,27 @@ export type Pending =
   // `owner` is whoever receives the fee and decides to collect or waive it: the property's owner,
   // or its tenant while it is leased.
   | { type: 'fee'; tile: number; payer: number; owner: number; amount: number }
+  // The current player stands on a utility he has not activated yet.
+  | { type: 'utility'; tile: number; cost: number }
   // cause 'fee': a landing fee that could not be paid. cause 'rent': rent due on completing a lap
-  // (the landing on the tile where the move ended has not been resolved yet).
-  | { type: 'insolvent'; cause: 'fee' | 'rent'; tile: number; payer: number; creditor: number; amount: number };
+  // (the landing on the tile where the move ended has not been resolved yet). cause 'card': a luck
+  // card made him pay the bank (creditor 'bank').
+  | {
+      type: 'insolvent';
+      cause: 'fee' | 'rent' | 'card';
+      tile: number;
+      payer: number;
+      creditor: number | 'bank';
+      amount: number;
+    };
 
 export type Phase =
   | 'awaiting_roll'
   | 'awaiting_purchase'
   | 'awaiting_fee_decision'
   | 'awaiting_end_turn'
+  // The current player stands on a utility he has not activated and may activate it for 100.
+  | 'awaiting_utility'
   // The current player stands on the real estate office and may develop and build stations.
   | 'in_office'
   // The current player cannot pay. Resolution rules arrive in phase 4; until then the game halts here.
@@ -95,6 +175,8 @@ export interface GameState {
    * count toward owning a whole district.
    */
   mortgaged: Record<number, number>;
+  /** Tile index -> total actually paid for the development steps (steps can be discounted by vouchers). */
+  developmentPaid: Record<number, number>;
   /** Tile index -> rental listing made by the owner (owners[tile]). laps null means open-ended. */
   leaseOffers: Record<number, { laps: number | null }>;
   /** Tile index -> active lease. lapsLeft counts the rent payments still due (null = open-ended). */
@@ -109,6 +191,9 @@ export type Action =
   | { type: 'DECLINE_PURCHASE'; playerId: number }
   | { type: 'COLLECT_FEE'; playerId: number }
   | { type: 'WAIVE_FEE'; playerId: number }
+  /** Pay 100 to activate the utility you stand on (once per player). */
+  | { type: 'ACTIVATE_UTILITY'; playerId: number }
+  | { type: 'SKIP_UTILITY'; playerId: number }
   /** Raise one property by one level. Only inside the office. */
   | { type: 'DEVELOP'; playerId: number; tile: number }
   /** Build the station on an owned property: inside the office, or on the property you just landed on. */
@@ -138,7 +223,25 @@ export type GameEvent =
   | { type: 'fee_due'; payer: number; owner: number; tile: number; amount: number }
   | { type: 'fee_paid'; payer: number; owner: number; tile: number; amount: number }
   | { type: 'fee_waived'; payer: number; owner: number; tile: number; amount: number }
-  | { type: 'insolvent'; cause: 'fee' | 'rent'; payer: number; creditor: number; tile: number; amount: number }
+  | {
+      type: 'insolvent';
+      cause: 'fee' | 'rent' | 'card';
+      payer: number;
+      creditor: number | 'bank';
+      tile: number;
+      amount: number;
+    }
+  /** Money between a player and the bank: positive = the bank pays the player, negative = the player pays the bank. */
+  | { type: 'bank_transfer'; playerId: number; amount: number; reason: string }
+  | { type: 'card_drawn'; playerId: number; deck: 'luck' | 'mystery'; cardId: string }
+  | { type: 'card_not_implemented'; playerId: number; cardId: string }
+  | { type: 'voucher_gained'; playerId: number; voucher: VoucherKind }
+  | { type: 'voucher_used'; playerId: number; voucher: VoucherKind; amount: number }
+  | { type: 'fee_exempted'; payer: number; owner: number; tile: number; amount: number }
+  | { type: 'utility_activated'; playerId: number; tile: number }
+  | { type: 'utility_skipped'; playerId: number; tile: number }
+  | { type: 'utility_used'; playerId: number; tile: number; amount: number }
+  | { type: 'market_report'; playerId: number; rentListings: number[] }
   | { type: 'listed_for_rent'; playerId: number; tile: number; laps: number | null }
   | { type: 'listing_cancelled'; playerId: number; tile: number }
   | { type: 'leased'; tenant: number; owner: number; tile: number; laps: number | null }

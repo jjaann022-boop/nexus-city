@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import rawBoard from '../src/data/board.json' with { type: 'json' };
+import { rawBoard } from '../src/data/index.ts';
 import { parseBoard, validateBoard } from '../src/engine/board.ts';
 import { EngineError } from '../src/engine/errors.ts';
 import { applyAction, checkInvariants, createGame, currentPlayerId, getLegalActions } from '../src/engine/engine.ts';
@@ -576,7 +576,7 @@ describe('random play simulation', () => {
   }
 
   it('keeps every invariant and conserves money over many random games', () => {
-    const totals = { bought: 0, collected: 0, waived: 0, gateBonuses: 0, developed: 0, stations: 0, offices: 0, mortgages: 0, redeems: 0, freeLandings: 0, listings: 0, leases: 0, rents: 0, leaseEnds: 0, turns: 0 };
+    const totals = { bought: 0, collected: 0, waived: 0, gateBonuses: 0, developed: 0, stations: 0, offices: 0, mortgages: 0, redeems: 0, freeLandings: 0, listings: 0, leases: 0, rents: 0, leaseEnds: 0, turns: 0, bankTransfers: 0, cards: 0, utilities: 0 };
 
     for (let seed = 1; seed <= 120; seed++) {
       const count = 2 + (seed % 5);
@@ -643,6 +643,15 @@ describe('random play simulation', () => {
             totals.waived++;
           } else if (e.type === 'turn_ended') {
             totals.turns++;
+          } else if (e.type === 'bank_transfer') {
+            // Cards, utilities and the gate ticket: money between a player and the bank.
+            if (e.amount > 0) received += e.amount;
+            else spent -= e.amount;
+            totals.bankTransfers++;
+          } else if (e.type === 'card_drawn') {
+            totals.cards++;
+          } else if (e.type === 'utility_activated') {
+            totals.utilities++;
           }
         }
         const problems = checkInvariants(board, s);
@@ -672,6 +681,9 @@ describe('random play simulation', () => {
     assert.ok(totals.leases > 2, 'bots should rent properties');
     assert.ok(totals.rents > 0, 'tenants should pay rent');
     assert.ok(totals.leaseEnds > 0, 'leases should end');
+    assert.ok(totals.cards > 50, 'bots should draw cards');
+    assert.ok(totals.utilities > 5, 'bots should activate utilities');
+    assert.ok(totals.bankTransfers > 50);
   });
 });
 

@@ -30,6 +30,12 @@ export function patch(state: GameState, change: (draft: GameState) => void): Gam
   return draft;
 }
 
+/** Puts a property at a development level and records what was paid for it (50% of the price per step). */
+export function setLevel(draft: GameState, tile: number, level: 2 | 3): void {
+  draft.levels[tile] = level;
+  draft.developmentPaid[tile] = ((board.tiles[tile].price as number) / 2) * (level - 1);
+}
+
 /**
  * Sets the generator so the next roll satisfies `want`. It searches with the real dice
  * function, so no seed or dice outcome is hard-coded.
@@ -96,6 +102,9 @@ export function playTurn(state: GameState): GameState {
     const next =
       legal.find((a) => a.type === 'DECLINE_PURCHASE') ??
       legal.find((a) => a.type === 'WAIVE_FEE') ??
+      legal.find((a) => a.type === 'SKIP_UTILITY') ??
+      legal.find((a) => a.type === 'LEAVE_OFFICE') ??
+      legal.find((a) => a.type === 'ROLL') ?? // a mystery card can grant one more throw
       legal.find((a) => a.type === 'END_TURN');
     if (!next) throw new Error(`stuck in phase ${s.phase}`);
     s = act(s, next).state;

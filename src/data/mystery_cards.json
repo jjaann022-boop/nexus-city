@@ -1,0 +1,145 @@
+[
+  {
+    "id": "investor_challenge",
+    "name": "تحدي المستثمر",
+    "effect": {
+      "type": "not_implemented"
+    }
+  },
+  {
+    "id": "quick_deal",
+    "name": "صفقة سريعة",
+    "effect": {
+      "type": "not_implemented"
+    }
+  },
+  {
+    "id": "city_auction",
+    "name": "مزاد المدينة",
+    "effect": {
+      "type": "not_implemented"
+    }
+  },
+  {
+    "id": "extra_round",
+    "name": "جولة إضافية",
+    "effect": {
+      "type": "extra_roll"
+    }
+  },
+  {
+    "id": "surprise_visit",
+    "name": "زيارة مفاجئة",
+    "effect": {
+      "type": "move_to_nearest",
+      "kind": "real_estate_office"
+    }
+  },
+  {
+    "id": "exploration_trip",
+    "name": "رحلة استكشافية",
+    "effect": {
+      "type": "not_implemented"
+    }
+  },
+  {
+    "id": "savings_challenge",
+    "name": "تحدي الادخار",
+    "effect": {
+      "type": "not_implemented"
+    }
+  },
+  {
+    "id": "business_offer",
+    "name": "عرض تجاري",
+    "effect": {
+      "type": "not_implemented"
+    }
+  },
+  {
+    "id": "ad_opportunity",
+    "name": "فرصة الإعلان",
+    "effect": {
+      "type": "not_implemented"
+    }
+  },
+  {
+    "id": "station_coupon",
+    "name": "قسيمة المحطة",
+    "effect": {
+      "type": "voucher",
+      "voucher": "station_discount"
+    }
+  },
+  {
+    "id": "negotiation_challenge",
+    "name": "تحدي التفاوض",
+    "effect": {
+      "type": "not_implemented"
+    }
+  },
+  {
+    "id": "temporary_alliance",
+    "name": "تحالف مؤقت",
+    "effect": {
+      "type": "not_implemented"
+    }
+  },
+  {
+    "id": "market_report",
+    "name": "كشف السوق",
+    "effect": {
+      "type": "market_report"
+    }
+  },
+  {
+    "id": "deal_protection",
+    "name": "حماية الصفقة",
+    "effect": {
+      "type": "not_implemented"
+    }
+  },
+  {
+    "id": "cooperation_challenge",
+    "name": "تحدي التعاون",
+    "effect": {
+      "type": "not_implemented"
+    }
+  },
+  {
+    "id": "investor_decision",
+    "name": "قرار المستثمر",
+    "effect": {
+      "type": "not_implemented"
+    }
+  },
+  {
+    "id": "development_opportunity",
+    "name": "فرصة التطوير",
+    "effect": {
+      "type": "voucher",
+      "voucher": "development_discount"
+    }
+  },
+  {
+    "id": "partnership_contract",
+    "name": "عقد الشراكة",
+    "effect": {
+      "type": "not_implemented"
+    }
+  },
+  {
+    "id": "debt_settlement",
+    "name": "تسوية الديون",
+    "effect": {
+      "type": "not_implemented"
+    }
+  },
+  {
+    "id": "investment_opportunity",
+    "name": "فرصة الاستثمار",
+    "effect": {
+      "type": "not_implemented"
+    }
+  }
+]

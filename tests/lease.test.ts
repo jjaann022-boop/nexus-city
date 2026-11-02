@@ -4,7 +4,7 @@ import { checkInvariants, getLegalActions } from '../src/engine/engine.ts';
 import { rentAmount } from '../src/engine/economy.ts';
 import { deserializeGame, SaveError, serializeGame } from '../src/engine/save.ts';
 import type { Action, GameEvent, GameState } from '../src/engine/types.ts';
-import { act, board, deepFreeze, expectCode, forceRoll, newGame, patch, rollOnto, totalIs } from './helpers.ts';
+import { act, board, deepFreeze, expectCode, forceRoll, newGame, patch, rollOnto, setLevel, totalIs } from './helpers.ts';
 
 // Placeholder board: commercial properties are tiles 1,2,4,6,8 priced 600,700,800,900,1000.
 const COMMERCIAL = [1, 2, 4, 6, 8];
@@ -318,7 +318,7 @@ describe('landing on a leased property', () => {
   });
 
   it('uses the level and station of the property', () => {
-    const s = patch(leased(world(), 4, T, null), (d) => void ((d.levels[4] = 3), (d.stations[4] = O)));
+    const s = patch(leased(world(), 4, T, null), (d) => void ((setLevel(d, 4, 3)), (d.stations[4] = O)));
     assert.equal((land(s, V).pending as { amount: number }).amount, 240 + 40);
   });
 

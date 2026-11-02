@@ -22,4 +22,20 @@ export const RULES = {
   stationFeeAddOnPercent: 5,
   /** Rent paid by the tenant to the owner each lap, in % of the original price. Owner decision: 50% (brief: 10%). */
   rentPercent: 50,
+  /** Brief section 3: landing on the luck/mystery tile draws from one of the two decks, 50% / 50%. */
+  luckDeckChancePercent: 50,
+  /** Brief section 9: activating a utility costs 100, once per player. */
+  utilityActivationCost: 100,
+  /** Brief section 9: shopping center / innovation center / maintenance center discount. */
+  utilityDiscountPercent: 10,
+  /** Brief section 9: the public park pays this each time it is used after activation. */
+  parkBonus: 200,
+  /** Brief section 12 card 15: discount on one purchase from the bank. */
+  purchaseVoucherAmount: 200,
+  /** Brief section 12 card 16: paid on the next pass of the gate. */
+  gateTicketAmount: 300,
+  /** Brief section 13 card 10: discount on one station built in the office. */
+  stationVoucherAmount: 200,
+  /** Brief section 13 card 17: discount on one development step. */
+  developmentVoucherAmount: 200,
 } as const;

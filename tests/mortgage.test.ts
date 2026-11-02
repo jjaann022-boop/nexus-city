@@ -4,7 +4,7 @@ import { checkInvariants, currentPlayerId, getLegalActions } from '../src/engine
 import { mortgageValue, ownsFullDistrict } from '../src/engine/economy.ts';
 import { deserializeGame, SaveError, serializeGame } from '../src/engine/save.ts';
 import type { Action, GameState } from '../src/engine/types.ts';
-import { act, board, deepFreeze, expectCode, newGame, patch, rollOnto } from './helpers.ts';
+import { act, board, deepFreeze, expectCode, newGame, patch, rollOnto, setLevel } from './helpers.ts';
 
 // Placeholder board: commercial properties are tiles 1,2,4,6,8 priced 600,700,800,900,1000.
 const COMMERCIAL = [1, 2, 4, 6, 8];
@@ -45,14 +45,14 @@ describe('mortgage value', () => {
   });
 
   it('adds what was paid for development (price 800, level 3 -> 800 + 800 = 1600)', () => {
-    assert.equal(mortgageValue(board, patch(base, (d) => void (d.levels[4] = 3)), 4), 1600);
-    assert.equal(mortgageValue(board, patch(base, (d) => void (d.levels[4] = 2)), 4), 1200);
+    assert.equal(mortgageValue(board, patch(base, (d) => void (setLevel(d, 4, 3))), 4), 1600);
+    assert.equal(mortgageValue(board, patch(base, (d) => void (setLevel(d, 4, 2))), 4), 1200);
   });
 
   it('adds the station price (its build cost = the original price)', () => {
     assert.equal(mortgageValue(board, patch(base, (d) => void (d.stations[4] = 0)), 4), 1600);
     assert.equal(
-      mortgageValue(board, patch(base, (d) => void ((d.levels[4] = 2), (d.stations[4] = 0))), 4),
+      mortgageValue(board, patch(base, (d) => void ((setLevel(d, 4, 2)), (d.stations[4] = 0))), 4),
       800 + 400 + 800,
     );
   });

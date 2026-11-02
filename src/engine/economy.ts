@@ -1,5 +1,5 @@
 import { RULES } from './rules.ts';
-import type { Board, District, GameState } from './types.ts';
+import type { Board, District, GameState, PlayerState } from './types.ts';
 
 // Board validation guarantees property prices are positive multiples of 20, so every
 // percentage used below (5%, 10%, 20%, 30%, 50%, 100%) produces a whole number of liras.
@@ -13,12 +13,12 @@ export function propertyPrice(board: Board, tile: number): number {
   return board.tiles[tile].price as number;
 }
 
-/** Cost of one development step (base -> 2, or 2 -> 3). */
+/** Standard cost of one development step (base -> 2, or 2 -> 3), before any voucher. */
 export function developmentCost(price: number): number {
   return percentOf(price, RULES.developmentCostPercent);
 }
 
-/** Cost of building the station on a property. */
+/** Cost of building the station on a property (also the station's price when mortgaged). */
 export function stationCost(price: number): number {
   return percentOf(price, RULES.stationCostPercent);
 }
@@ -49,23 +49,82 @@ export function landingFee(board: Board, state: GameState, tile: number): number
   return fee;
 }
 
+/** True when the player has activated the utility of that district. */
+export function hasUtility(board: Board, player: PlayerState, district: District): boolean {
+  return player.utilities.some((tile) => board.tiles[tile]?.district === district);
+}
+
 /**
- * Total paid for the development steps of a property.
- * NOTE: derived from the level because every step costs the standard amount today. When discount
- * vouchers arrive (phase 3) the amount actually paid must be tracked per property instead.
+ * What the player pays the bank for an unowned property: the original price, minus 10% for
+ * commercial properties when he activated the shopping center, then minus the 200 voucher.
  */
-export function developmentPaid(board: Board, state: GameState, tile: number): number {
-  return (levelOf(state, tile) - 1) * developmentCost(propertyPrice(board, tile));
+export function purchaseCost(
+  board: Board,
+  state: GameState,
+  playerId: number,
+  tile: number,
+  withVoucher = true,
+): number {
+  const player = state.players[playerId];
+  const price = propertyPrice(board, tile);
+  let cost = price;
+  if (board.tiles[tile].district === 'commercial' && hasUtility(board, player, 'commercial')) {
+    cost -= percentOf(price, RULES.utilityDiscountPercent);
+  }
+  if (withVoucher && player.vouchers.purchase_discount > 0) cost = Math.max(0, cost - RULES.purchaseVoucherAmount);
+  return cost;
+}
+
+/**
+ * What the player pays to build a station: the build cost, minus 10% in the tech and industrial
+ * districts when he activated that district's utility, then (office only) minus the 200 voucher.
+ */
+export function stationBuildCost(
+  board: Board,
+  state: GameState,
+  playerId: number,
+  tile: number,
+  viaOffice: boolean,
+  withVoucher = true,
+): number {
+  const player = state.players[playerId];
+  const district = board.tiles[tile].district as District;
+  const full = stationCost(propertyPrice(board, tile));
+  let cost = full;
+  if ((district === 'tech' || district === 'industrial') && hasUtility(board, player, district)) {
+    cost -= percentOf(full, RULES.utilityDiscountPercent);
+  }
+  if (withVoucher && viaOffice && player.vouchers.station_discount > 0) cost = Math.max(0, cost - RULES.stationVoucherAmount);
+  return cost;
+}
+
+/** What the player pays for the next development step of a property (after the 200 voucher, if any). */
+export function developmentStepCost(
+  board: Board,
+  state: GameState,
+  playerId: number,
+  tile: number,
+  withVoucher = true,
+): number {
+  const standard = developmentCost(propertyPrice(board, tile));
+  return withVoucher && state.players[playerId].vouchers.development_discount > 0
+    ? Math.max(0, standard - RULES.developmentVoucherAmount)
+    : standard;
+}
+
+/** What was actually paid so far for the development of a property. */
+export function developmentPaid(state: GameState, tile: number): number {
+  return state.developmentPaid[tile] ?? 0;
 }
 
 /**
  * What the owner receives from the bank for mortgaging (and repays to redeem):
- * original price + development paid + the station's price if one stands on the property.
+ * original price + development actually paid + the station's price if one stands on the property.
  */
 export function mortgageValue(board: Board, state: GameState, tile: number): number {
   const price = propertyPrice(board, tile);
   const station = state.stations[tile] !== undefined ? stationCost(price) : 0;
-  return price + developmentPaid(board, state, tile) + station;
+  return price + developmentPaid(state, tile) + station;
 }
 
 /**
